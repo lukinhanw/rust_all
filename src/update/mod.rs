@@ -150,16 +150,17 @@ fn check(work: &Path) -> Result<String, String> {
     } else { Err(format!("{msg}; {}", errs.join("; "))) }
 }
 
-/// After install / uninstall: the task and the installer copy exist exactly while at least one plugin is installed.
+/// After install / uninstall. This fork ships its own builds of the plugins, and the WinRust-update task would replace them
+/// with the official releases (the signed manifest only knows those): the task is never created, and one left by an
+/// official install is removed. `plugin-launcher autoupdate` still runs a manual check when asked for.
 pub(crate) fn updater_sync() {
-    if PLUGINS.iter().any(|p| (p.installed)()) {
-        soft(t!("автообновление не включено", "automatic updates were not enabled", ja: "自動更新は有効になりませんでした", pt: "as atualizações automáticas não foram ativadas"), enable());
-    } else {
-        let _ = run("schtasks", &["/delete", "/tn", TASK, "/f"]);
+    let _ = run("schtasks", &["/delete", "/tn", TASK, "/f"]);
+    if !PLUGINS.iter().any(|p| (p.installed)()) {
         let _ = fs::remove_dir_all(home()); // fails harmlessly if this very copy is running
     }
 }
 
+#[allow(dead_code)] // the official installer's way of turning automatic updates on, kept for merges from upstream
 fn enable() -> Result<(), String> {
     let me = env::current_exe().map_err(|e| e.to_string())?;
     fs::create_dir_all(home()).map_err(|e| e.to_string())?;

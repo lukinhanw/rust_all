@@ -116,8 +116,29 @@ pub(crate) fn program_files() -> PathBuf {
 }
 
 // shortcut: Windows makes at most one restore point per 24 h and it needs System Protection on; failures are ignored.
+// Checkpoint-Computer can hang for good on some machines (the shadow copy is taken, the cmdlet never returns), which
+// froze the install at its first plugin: after 60 s it is abandoned and the install goes on.
 pub(crate) fn checkpoint() -> Result<(), String> {
-    run("powershell", &["-NoProfile", "-Command", "Checkpoint-Computer -Description 'Plugin Launcher' -RestorePointType MODIFY_SETTINGS"])
+    let mut c = Command::new("powershell")
+        .args(["-NoProfile", "-Command", "Checkpoint-Computer -Description 'Plugin Launcher' -RestorePointType MODIFY_SETTINGS"])
+        .creation_flags(0x0800_0000)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("powershell: {e}"))?;
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        match c.try_wait().map_err(|e| e.to_string())? {
+            Some(s) if s.success() => return Ok(()),
+            Some(s) => return Err(format!("Checkpoint-Computer: {s}")),
+            None if std::time::Instant::now() >= end => {
+                let _ = c.kill();
+                let _ = c.wait();
+                return Err("Checkpoint-Computer: no answer after 60 s".into());
+            }
+            None => std::thread::sleep(std::time::Duration::from_millis(250)),
+        }
+    }
 }
 
 // Shared by the window and the command line, so both do exactly the same thing.
