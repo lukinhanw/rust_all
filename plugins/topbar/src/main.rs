@@ -828,7 +828,9 @@ unsafe extern "system" fn collect(h: HWND, lp: LPARAM) -> i32 {
     let mut cls = [0u16; 32];
     let n = GetClassNameW(h, cls.as_mut_ptr(), 32) as usize;
     let ours = String::from_utf16_lossy(&cls[..n]) == "topbar";
-    if IsWindowVisible(h) != 0 && GetWindow(h, GW_OWNER).is_null() && cloaked == 0 && !ours && GetWindowTextLengthW(h) > 0 && (ex & WS_EX_TOOLWINDOW == 0 || ex & WS_EX_APPWINDOW != 0) {
+    // an untitled window counts when it asks for a button (WS_EX_APPWINDOW), like under Explorer
+    let titled = GetWindowTextLengthW(h) > 0 || ex & WS_EX_APPWINDOW != 0;
+    if IsWindowVisible(h) != 0 && GetWindow(h, GW_OWNER).is_null() && cloaked == 0 && !ours && titled && (ex & WS_EX_TOOLWINDOW == 0 || ex & WS_EX_APPWINDOW != 0) {
         (*(lp as *mut Vec<HWND>)).push(h);
     }
     1
