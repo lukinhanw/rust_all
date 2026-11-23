@@ -17,6 +17,8 @@
 //   shortcuts: wallpaper is loaded once (changing it needs a restart), icon labels are always white, no background menu /
 //   drag-to-position / auto-arrange, items from the public desktop can't be renamed.
 #![windows_subsystem = "windows"]
+#[macro_use]
+extern crate winrust_common; // t!: the menus in the language picked for every WinRust program (%ProgramData%\WinRust\lang.txt)
 use std::{cell::RefCell, env, fs, os::windows::fs::MetadataExt, path::{Path, PathBuf}, ptr, sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed}};
 use windows_sys::Win32::{Foundation::*, Graphics::Gdi::{GetStockObject, InvalidateRect}, System::LibraryLoader::GetModuleHandleW, UI::{Controls::*, Input::KeyboardAndMouse::{GetKeyState, SetFocus, VK_CONTROL}, Shell::*, WindowsAndMessaging::*}};
 
@@ -121,6 +123,36 @@ static SHOW_HIDDEN: AtomicBool = AtomicBool::new(false); // Ctrl+H
 static NAV: AtomicBool = AtomicBool::new(false); // loading from the back / forward trail: do not record it again
 const WM_NAV: u32 = WM_APP + 3; // wp: 1 back, 2 forward, 3 properties, 4 up (sent from the message loop for Alt+key)
 const WM_JOB: u32 = WM_APP + 5; // jobs.rs worker finished: wp = Box<Option<String>> (the error, if any)
+
+/// The Recycle Bin's row on the desktop. It is no file: its name is the shell's parsing name, which no real file can have
+/// (a `:` is not allowed in file names), so every place that turns rows into paths can tell it apart.
+const BIN: &str = "::{645FF040-5081-101B-9F08-08002B30309D}";
+fn is_bin(p: &Path) -> bool { p.to_string_lossy().ends_with(BIN) }
+
+/// Opens the Recycle Bin. Shell addresses are not shown here: the "explore" verb gives a real Explorer window (see main()).
+fn open_bin(h: HWND) {
+    unsafe { ShellExecuteW(h, w("explore").as_ptr(), w("shell:RecycleBinFolder").as_ptr(), ptr::null(), ptr::null(), SW_SHOWNORMAL) };
+}
+
+/// The bin's own icon (empty or full, as it is now).
+fn bin_icon() -> i32 { sh::bin_icon() }
+
+/// Right click on the bin: open it or empty it (Windows asks before emptying).
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe fn bin_menu(h: HWND) {
+    let m = CreatePopupMenu();
+    AppendMenuW(m, MF_STRING, 1, w(t!("Открыть", "Open", ja: "開く", pt: "Abrir")).as_ptr());
+    AppendMenuW(m, MF_STRING, 2, w(t!("Очистить корзину", "Empty Recycle Bin", ja: "ごみ箱を空にする", pt: "Esvaziar Lixeira")).as_ptr());
+    let mut pt: POINT = std::mem::zeroed();
+    GetCursorPos(&mut pt);
+    let id = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, h, ptr::null());
+    DestroyMenu(m);
+    match id {
+        1 => open_bin(h),
+        2 => { SHEmptyRecycleBinW(h, ptr::null(), 0); reload(h); } // the icon turns empty
+        _ => {}
+    }
+}
 
 fn row(name: String, m: Option<&fs::Metadata>) -> Row {
     Row { name, dir: m.is_some_and(|m| m.is_dir()), size: m.map_or(0, |m| m.len()), time: m.map_or(0, |m| m.last_write_time()), icon: -1, thumb: -2, hdr: false }
@@ -332,6 +364,7 @@ fn real_paths(paths: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
 
 /// Enter / double click on a row.
 unsafe fn activate(h: HWND, p: PathBuf, is_dir: bool) {
+    if desk() && is_bin(&p) { return open_bin(h); }
     // a file inside a zip: a real copy in the temp folder first
     let p = match zip_names(std::slice::from_ref(&p)) {
         Some((arc, names)) if !is_dir => match materialize(&arc, &names) {
@@ -355,7 +388,12 @@ unsafe fn activate(h: HWND, p: PathBuf, is_dir: bool) {
 fn zip_menu(h: HWND, paths: &[PathBuf]) {
     let id = unsafe {
         let m = CreatePopupMenu();
-        for (i, t) in [(1usize, "Open"), (2, "Copy"), (3, "Extract here")] { AppendMenuW(m, MF_STRING, i, w(t).as_ptr()); }
+        let items = [
+            (1usize, t!("Открыть", "Open", ja: "開く", pt: "Abrir")),
+            (2, t!("Копировать", "Copy", ja: "コピー", pt: "Copiar")),
+            (3, t!("Извлечь сюда", "Extract here", ja: "ここに展開", pt: "Extrair aqui")),
+        ];
+        for (i, t) in items { AppendMenuW(m, MF_STRING, i, w(t).as_ptr()); }
         let mut pt: POINT = std::mem::zeroed();
         GetCursorPos(&mut pt);
         let id = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, h, ptr::null());
@@ -385,13 +423,22 @@ fn zip_menu(h: HWND, paths: &[PathBuf]) {
 /// The shell menu for the selection, with our "Compress to ZIP" / "Extract here" on top.
 fn item_menu(h: HWND, dir: &Path, paths: &[PathBuf]) {
     if zipx::split_zip(dir).is_some() { return zip_menu(h, paths); }
-    let mut extra = vec![(MENU_ZIP, "Compress to ZIP")];
+    let mut extra = vec![(MENU_ZIP, t!("Сжать в ZIP", "Compress to ZIP", ja: "ZIP に圧縮", pt: "Compactar em ZIP"))];
     if paths.iter().all(|p| p.is_file() && jobs::is_archive(p)) {
-        extra.insert(0, (MENU_EXTRACT, "Extract here"));
+        extra.insert(0, (MENU_EXTRACT, t!("Извлечь сюда", "Extract here", ja: "ここに展開", pt: "Extrair aqui")));
     }
     // the shell menu has no Rename here (it needs the shell's own folder view to answer it): the same edit box as F2
-    if paths.len() == 1 { extra.push((MENU_RENAME, "Rename")); }
-    if let [p] = paths { if p.is_dir() { extra.push((MENU_PIN, if ui::pins().contains(p) { "Unpin from Quick access" } else { "Pin to Quick access" })); } }
+    if paths.len() == 1 { extra.push((MENU_RENAME, t!("Переименовать", "Rename", ja: "名前の変更", pt: "Renomear"))); }
+    if let [p] = paths {
+        if p.is_dir() {
+            let pin = if ui::pins().contains(p) {
+                t!("Открепить от панели быстрого доступа", "Unpin from Quick access", ja: "クイック アクセスからピン留めを外す", pt: "Desafixar do Acesso rápido")
+            } else {
+                t!("Закрепить на панели быстрого доступа", "Pin to Quick access", ja: "クイック アクセスにピン留め", pt: "Fixar no Acesso rápido")
+            };
+            extra.push((MENU_PIN, pin));
+        }
+    }
     let picked = sh::show(h, paths, if jobs::busy() { &[] } else { &extra }).ok().flatten();
     match picked {
         Some(MENU_PIN) => ui::toggle_pin(&paths[0]),
@@ -438,13 +485,28 @@ fn set_icons_hidden(hide: bool) {
 #[allow(unsafe_op_in_unsafe_fn)]
 unsafe fn bg_menu(h: HWND) {
     let m = CreatePopupMenu();
-    for (id, t) in [(1usize, "New folder"), (2, "New text file"), (3, "Paste"), (4, "Refresh"), (5, "Properties")] { AppendMenuW(m, MF_STRING, id, w(t).as_ptr()); }
+    let items = [
+        (1usize, t!("Новая папка", "New folder", ja: "新しいフォルダー", pt: "Nova pasta")),
+        (2, t!("Новый текстовый файл", "New text file", ja: "新しいテキスト ファイル", pt: "Novo arquivo de texto")),
+        (3, t!("Вставить", "Paste", ja: "貼り付け", pt: "Colar")),
+        (4, t!("Обновить", "Refresh", ja: "最新の情報に更新", pt: "Atualizar")),
+        (5, t!("Свойства", "Properties", ja: "プロパティ", pt: "Propriedades")),
+    ];
+    for (id, t) in items { AppendMenuW(m, MF_STRING, id, w(t).as_ptr()); }
     let disk = tool("wiztree");
-    if disk.is_some() { AppendMenuW(m, MF_STRING, 6, w("Disk usage (WinRust Disk)").as_ptr()); }
-    if desk() { for (id, l) in [(8usize, "Sort icons by name"), (9, "Sort icons by date"), (10, "Sort icons by size"), (11, "Arrange icons")] { AppendMenuW(m, MF_STRING, id, w(l).as_ptr()); } }
-    if !desk() { AppendMenuW(m, MF_STRING, 13, w(if group_on() { "No grouping" } else { "Group by date" }).as_ptr()); }
-    if desk() { AppendMenuW(m, MF_STRING, 12, w(if small_marker().exists() { "Large icons" } else { "Small icons" }).as_ptr()); }
-    if desk() { AppendMenuW(m, MF_STRING, 7, w(if icons_hidden() { "Show desktop icons" } else { "Hide desktop icons" }).as_ptr()); }
+    if disk.is_some() { AppendMenuW(m, MF_STRING, 6, w(t!("Занятое место (WinRust Disk)", "Disk usage (WinRust Disk)", ja: "ディスク使用量 (WinRust Disk)", pt: "Uso do disco (WinRust Disk)")).as_ptr()); }
+    if desk() {
+        let sort = [
+            (8usize, t!("Упорядочить по имени", "Sort icons by name", ja: "名前で並べ替え", pt: "Classificar ícones por nome")),
+            (9, t!("Упорядочить по дате", "Sort icons by date", ja: "日付で並べ替え", pt: "Classificar ícones por data")),
+            (10, t!("Упорядочить по размеру", "Sort icons by size", ja: "サイズで並べ替え", pt: "Classificar ícones por tamanho")),
+            (11, t!("Выровнять значки", "Arrange icons", ja: "アイコンを整列", pt: "Organizar ícones")),
+        ];
+        for (id, l) in sort { AppendMenuW(m, MF_STRING, id, w(l).as_ptr()); }
+    }
+    if !desk() { AppendMenuW(m, MF_STRING, 13, w(if group_on() { t!("Без группировки", "No grouping", ja: "グループ化しない", pt: "Sem agrupamento") } else { t!("Группировать по дате", "Group by date", ja: "日付でグループ化", pt: "Agrupar por data") }).as_ptr()); }
+    if desk() { AppendMenuW(m, MF_STRING, 12, w(if small_marker().exists() { t!("Крупные значки", "Large icons", ja: "大アイコン", pt: "Ícones grandes") } else { t!("Мелкие значки", "Small icons", ja: "小アイコン", pt: "Ícones pequenos") }).as_ptr()); }
+    if desk() { AppendMenuW(m, MF_STRING, 7, w(if icons_hidden() { t!("Показать значки рабочего стола", "Show desktop icons", ja: "デスクトップ アイコンを表示", pt: "Mostrar ícones da área de trabalho") } else { t!("Скрыть значки рабочего стола", "Hide desktop icons", ja: "デスクトップ アイコンを非表示", pt: "Ocultar ícones da área de trabalho") }).as_ptr()); }
     let mut pt: POINT = std::mem::zeroed();
     GetCursorPos(&mut pt);
     let id = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, h, ptr::null());
@@ -470,8 +532,8 @@ unsafe fn bg_menu(h: HWND) {
             let drive: String = dir.to_string_lossy().chars().take(2).collect();
             if let Some(exe) = disk { let _ = std::process::Command::new(exe).arg(drive).spawn(); }
         }
-        1 => new_entry(&dir, "New folder", true),
-        2 => new_entry(&dir, "New text document.txt", false),
+        1 => new_entry(&dir, t!("Новая папка", "New folder", ja: "新しいフォルダー", pt: "Nova pasta"), true),
+        2 => new_entry(&dir, t!("Новый текстовый документ.txt", "New text document.txt", ja: "新しいテキスト ドキュメント.txt", pt: "Novo documento de texto.txt"), false),
         3 => paste(h, &dir),
         5 => properties(&dir),
         _ => {}
@@ -546,6 +608,7 @@ pub fn cur_dir() -> PathBuf { ST.with_borrow(|st| st.dir.clone()) }
 
 /// System image-list index. Extension-based (no disk access) except for files that carry their own icon.
 fn icon_of(p: &PathBuf, dir: bool) -> i32 {
+    if desk() && is_bin(p) { return bin_icon(); }
     let ext = p.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
     let own = !dir && matches!(ext.as_str(), "exe" | "lnk" | "ico" | "url" | "scr");
     let mut fi: SHFILEINFOW = unsafe { std::mem::zeroed() };
@@ -564,6 +627,7 @@ fn tab_text(tab: HWND, _i: usize, _text: &str, _insert: bool) {
 /// lose their ".lnk" / ".url" like in Explorer. Other windows show the row as it is.
 fn shown_name(name: &str, desktop: bool) -> String {
     if !desktop { return name.to_string(); }
+    if name == BIN { return t!("Корзина", "Recycle Bin", ja: "ごみ箱", pt: "Lixeira").into(); }
     let file = std::path::Path::new(name).file_name().map_or_else(|| name.to_string(), |n| n.to_string_lossy().into_owned());
     let lower = file.to_lowercase();
     if lower.ends_with(".lnk") || lower.ends_with(".url") { file[..file.len() - 4].to_string() } else { file }
@@ -596,6 +660,7 @@ fn rows_of(dir: &PathBuf) -> Option<Vec<Row>> {
             rows.push(row(name, m.as_ref()));
         }
     }
+    if desk() { rows.push(Row { name: BIN.into(), dir: false, size: 0, time: 0, icon: -1, thumb: -1, hdr: false }); }
     sort_rows(&mut rows, SORT_COL.load(Relaxed), SORT_ASC.load(Relaxed));
     add_headers(&mut rows);
     Some(rows)
@@ -716,7 +781,7 @@ fn selected() -> (HWND, PathBuf, Vec<PathBuf>) {
         loop {
             i = put(st.list, LVM_GETNEXTITEM, i as usize, LVNI_SELECTED as isize);
             let Some(r) = usize::try_from(i).ok().and_then(|i| st.rows.get(i)) else { break };
-            if !r.hdr { sel.push(st.dir.join(&r.name)); }
+            if !r.hdr && r.name != BIN { sel.push(st.dir.join(&r.name)); } // the bin is no file: never copied, moved or deleted
         }
         (st.list, st.dir.clone(), sel)
     })
@@ -875,6 +940,18 @@ mod sh {
             let s = p.to_string().ok();
             CoTaskMemFree(Some(p.0 as *const c_void));
             s.map(PathBuf::from)
+        }
+    }
+
+    /// System image-list index of the Recycle Bin's icon (empty or full, as it is now), from its shell item.
+    pub fn bin_icon() -> i32 {
+        unsafe {
+            let Ok(pidl) = SHGetKnownFolderIDList(&FOLDERID_RecycleBinFolder, KF_FLAG_DEFAULT.0 as u32, None) else { return -1 };
+            use windows_sys::Win32::UI::Shell as s; // SHGetFileInfoW is only enabled in windows-sys here
+            let mut fi: s::SHFILEINFOW = std::mem::zeroed();
+            s::SHGetFileInfoW(pidl as *const u16, 0, &mut fi, size_of::<s::SHFILEINFOW>() as u32, s::SHGFI_PIDL | s::SHGFI_SYSICONINDEX | s::SHGFI_SMALLICON);
+            CoTaskMemFree(Some(pidl as *const c_void));
+            fi.iIcon
         }
     }
 
@@ -1695,7 +1772,8 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                     }
                     NM_RCLICK if nm.hwndFrom == list => {
                         let (_, dir, paths) = selected();
-                        if !paths.is_empty() { item_menu(h, &dir, &paths); } else { bg_menu(h); }
+                        let bin = desk() && ST.with_borrow(|st| usize::try_from(put(list, LVM_GETNEXTITEM, usize::MAX, LVNI_SELECTED as isize)).ok().and_then(|i| st.rows.get(i)).is_some_and(|r| r.name == BIN));
+                        if !paths.is_empty() { item_menu(h, &dir, &paths); } else if bin { bin_menu(h); } else { bg_menu(h); }
                     }
                     LVN_COLUMNCLICK => {
                         let c = (*(lp as *const NMLISTVIEW)).iSubItem as usize;
@@ -1777,8 +1855,8 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                         reload(h);
                     }
                     LVN_BEGINLABELEDITW => {
-                        let hdr = ST.with_borrow(|st| usize::try_from((*(lp as *const NMLVDISPINFOW)).item.iItem).ok().and_then(|i| st.rows.get(i)).is_some_and(|r| r.hdr));
-                        if hdr { return 1; } // a heading cannot be renamed
+                        let hdr = ST.with_borrow(|st| usize::try_from((*(lp as *const NMLVDISPINFOW)).item.iItem).ok().and_then(|i| st.rows.get(i)).is_some_and(|r| r.hdr || r.name == BIN));
+                        if hdr { return 1; } // a heading (or the Recycle Bin) cannot be renamed
                         let e = SendMessageW(ST.with_borrow(|st| st.list), LVM_GETEDITCONTROL, 0, 0) as HWND;
                         if e != 0 as HWND { LABEL_OLD.store(SetWindowLongPtrW(e, GWLP_WNDPROC, label_proc as *const () as isize), std::sync::atomic::Ordering::Relaxed); }
                     }
