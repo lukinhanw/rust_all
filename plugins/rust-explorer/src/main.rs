@@ -235,6 +235,31 @@ fn properties(path: &PathBuf) {
     unsafe { ShellExecuteExW(&mut sei) };
 }
 
+/// Address bar text that is not a folder: run it as a command in the folder shown, like Explorer's address bar
+/// (`cmd`, `powershell`, `wt`, `code .`, `notepad x.txt`). A bare path (a `\`, `/` or `:` and no space) is left alone, so
+/// a mistyped path still just resets the bar. Inside a .zip the folder holding the .zip is used. False when nothing started.
+fn run_here(text: &str) -> bool {
+    if text.is_empty() || text.contains(['\\', '/', ':']) && !text.contains(' ') { return false; }
+    let dir = cur_dir();
+    let dir = match zipx::split_zip(&dir) { Some((zip, _)) => zip.parent().map(Path::to_path_buf).unwrap_or(dir), None => dir };
+    if !dir.is_dir() { return false; }
+    let (prog, args) = match text.strip_prefix('"').and_then(|r| r.split_once('"')) {
+        Some((p, rest)) => (p.to_string(), rest.trim().to_string()),
+        None => match text.split_once(char::is_whitespace) { Some((p, a)) => (p.to_string(), a.trim().to_string()), None => (text.to_string(), String::new()) },
+    };
+    if prog.contains(['\\', '/', ':']) { return false; } // `C:\x y` is a path with a space, not a command
+    // Windows Terminal ignores the working directory it is started with: hand it the folder explicitly
+    let wt = prog.eq_ignore_ascii_case("wt") || prog.eq_ignore_ascii_case("wt.exe");
+    let args = if wt && args.is_empty() { format!("-d \"{}\"", dir.display()) } else { args };
+    let (f, a, d) = (w(&prog), w(&args), w(&dir.to_string_lossy()));
+    let mut sei: SHELLEXECUTEINFOW = unsafe { std::mem::zeroed() };
+    sei.cbSize = size_of::<SHELLEXECUTEINFOW>() as u32;
+    sei.fMask = 0x0000_0400; // SEE_MASK_FLAG_NO_UI: an unknown name just resets the bar, no error box
+    sei.lpFile = f.as_ptr(); sei.lpDirectory = d.as_ptr(); sei.nShow = SW_SHOWNORMAL;
+    if !args.is_empty() { sei.lpParameters = a.as_ptr(); }
+    unsafe { ShellExecuteExW(&mut sei) != 0 }
+}
+
 /// New folder / new empty file with a free name ("New folder", "New folder (2)", ...).
 fn new_entry(dir: &PathBuf, base: &str, folder: bool) {
     if zipx::split_zip(dir).is_some() { return; }
@@ -1812,6 +1837,7 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                     if let Some(q) = text.trim().strip_prefix('?') {
                         if !q.trim().is_empty() { search(h, q.trim()); SetFocus(list); return 0; } // keep the query in the bar
                     } else if p.is_dir() || zipx::split_zip(&p).is_some() { load(h, p); } // also a path inside a .zip
+                    else { run_here(text.trim()); } // like Explorer: `cmd`, `wt`, `code .` start in this folder
                 }
                 SetWindowTextW(edit, w(&cur_dir().to_string_lossy()).as_ptr()); // also undoes a bad path / Esc
                 SetFocus(list);
