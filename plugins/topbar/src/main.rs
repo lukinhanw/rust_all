@@ -2481,8 +2481,15 @@ unsafe fn click(h: i32, left: bool, mid: bool) {
                     open(l)
                 }),
                 (Some(&w), false) => close_window(w), // right / middle click
-                // several windows of one app: pick which one (the same list the right-click menu opens with)
-                (Some(_), true) if wins.len() > 1 => app_menu(BAR.load(Relaxed) as HWND, h),
+                // several windows of one app: pick which one from their live previews (the same cards hovering shows);
+                // the right-click menu only if the previews cannot be shown
+                (Some(_), true) if wins.len() > 1 => {
+                    let bar = BAR.load(Relaxed) as HWND;
+                    KillTimer(bar, 2); // the pending hover timer would re-lay the cards out a moment later
+                    if !thumbs::show_preview(h, tip_cx(&bar_layout(bar), h)) {
+                        app_menu(bar, h);
+                    }
+                }
                 (Some(&w), true) => {
                     // like the Windows taskbar: the active app's button minimizes it, a minimized one restores, any other raises
                     let fg = GetForegroundWindow();
