@@ -47,6 +47,18 @@ pub(crate) fn close_rect(r: &RECT) -> RECT {
     RECT { left: r.right - s - sc(4), top: r.top + sc(4), right: r.right - sc(4), bottom: r.top + sc(4) + s }
 }
 
+/// The ← and → left of the ×: they move a window one place in its app's previews.
+pub(crate) fn move_rects(r: &RECT) -> (RECT, RECT) {
+    let c = close_rect(r);
+    let s = c.right - c.left;
+    let right = RECT { left: c.left - s - sc(2), right: c.left - sc(2), ..c };
+    (RECT { left: right.left - s - sc(2), right: right.left - sc(2), ..c }, right)
+}
+
+fn hit(r: &RECT, x: i32, y: i32) -> bool {
+    x >= r.left && x < r.right && y >= r.top && y < r.bottom
+}
+
 /// Where the preview goes inside a card: under the title row.
 fn preview_area(r: &RECT) -> RECT {
     RECT { left: r.left + sc(8), top: r.top + sc(TITLE), right: r.right - sc(8), bottom: r.bottom - sc(8) }
@@ -91,8 +103,8 @@ pub(crate) unsafe fn unregister(ids: &mut Vec<isize>) {
 }
 
 /// Paints the cards (background, title row with icon and close box, big icon where DWM shows no preview) of `host`.
-/// `sel` gets the accent ring.
-pub(crate) unsafe fn paint(host: HWND, wins: &[HWND], rects: &[RECT], ids: &[isize], sel: Option<usize>) {
+/// `sel` gets the accent ring (and, with `arrows`, the ← → that move it).
+pub(crate) unsafe fn paint(host: HWND, wins: &[HWND], rects: &[RECT], ids: &[isize], sel: Option<usize>, arrows: bool) {
     let mut ps: PAINTSTRUCT = zeroed();
     let dc = BeginPaint(host, &mut ps);
     let mut r: RECT = zeroed();
@@ -117,9 +129,18 @@ pub(crate) unsafe fn paint(host: HWND, wins: &[HWND], rects: &[RECT], ids: &[isi
         let mut b = [0u16; 256];
         let n = GetWindowTextW(w, b.as_mut_ptr(), 256).max(0) as usize;
         let x = close_rect(c);
-        text(mem, &String::from_utf16_lossy(&b[..n]), RECT { left: c.left + sc(30), top: c.top, right: x.left - sc(4), bottom: c.top + t }, pal().text, 0);
+        let (ml, mr) = move_rects(c);
+        let arr = on && arrows && wins.len() > 1;
+        let tr = if arr { ml.left } else { x.left } - sc(4);
+        text(mem, &String::from_utf16_lossy(&b[..n]), RECT { left: c.left + sc(30), top: c.top, right: tr, bottom: c.top + t }, pal().text, 0);
         if on {
             text(mem, "\u{2715}", x, pal().text, DT_CENTER);
+        }
+        if arr && k > 0 {
+            text(mem, "\u{2190}", ml, pal().text, DT_CENTER);
+        }
+        if arr && k + 1 < wins.len() {
+            text(mem, "\u{2192}", mr, pal().text, DT_CENTER);
         }
         if ids.get(k).is_none_or(|&id| id == 0) {
             let a = preview_area(c);
@@ -181,6 +202,13 @@ unsafe fn layout(pv: HWND, wins: Vec<HWND>, cx: i32) {
     InvalidateRect(pv, null(), 0);
 }
 
+/// Lays the previews out again for `wins`, centered where the window is now.
+unsafe fn relayout(pv: HWND, wins: Vec<HWND>) {
+    let mut wr: RECT = zeroed();
+    GetWindowRect(pv, &mut wr);
+    layout(pv, wins, if vert() { (wr.top + wr.bottom) / 2 } else { (wr.left + wr.right) / 2 });
+}
+
 pub(crate) unsafe fn hide_preview() {
     let pv = PVWND.get();
     if pv.is_null() || IsWindowVisible(pv) == 0 {
@@ -196,7 +224,7 @@ pub(crate) unsafe fn hide_preview() {
 pub(crate) unsafe extern "system" fn pv_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     let (x, y) = ((lp & 0xffff) as i16 as i32, (lp >> 16) as i16 as i32);
     match msg {
-        WM_PAINT => PV.with_borrow(|(w, r, ids, sel)| paint(hwnd, w, r, ids, *sel)),
+        WM_PAINT => PV.with_borrow(|(w, r, ids, sel)| paint(hwnd, w, r, ids, *sel, true)),
         WM_MOUSEACTIVATE => return MA_NOACTIVATE as isize,
         WM_MOUSEMOVE => {
             let k = PV.with_borrow(|p| card_at(&p.1, x, y));
@@ -207,16 +235,35 @@ pub(crate) unsafe extern "system" fn pv_proc(hwnd: HWND, msg: u32, wp: WPARAM, l
         WM_LBUTTONUP | WM_MBUTTONUP => {
             let Some((k, w, r)) = PV.with_borrow(|p| card_at(&p.1, x, y).map(|k| (k, p.0[k], p.1[k]))) else { return 0 };
             let c = close_rect(&r);
-            if msg == WM_MBUTTONUP || (x >= c.left && x < c.right && y >= c.top && y < c.bottom) {
+            let (ml, mr) = move_rects(&r);
+            let mut v = PV.with_borrow(|p| p.0.clone());
+            let to = if msg != WM_LBUTTONUP || v.len() < 2 {
+                None
+            } else if k > 0 && hit(&ml, x, y) {
+                Some(k - 1)
+            } else if k + 1 < v.len() && hit(&mr, x, y) {
+                Some(k + 1)
+            } else {
+                None
+            };
+            if let Some(j) = to {
+                // the one way to change the order: swap the two in the remembered order, so it sticks
+                ORDER.with_borrow_mut(|o| {
+                    if let (Some(a), Some(b)) = (o.iter().position(|&h| h == v[k]), o.iter().position(|&h| h == v[j])) {
+                        o.swap(a, b);
+                    }
+                });
+                refresh_buttons();
+                v.swap(k, j);
+                relayout(hwnd, v);
+                PV.with_borrow_mut(|p| p.3 = Some(j)); // the arrows stay on the moved card
+            } else if msg == WM_MBUTTONUP || hit(&c, x, y) {
                 PostMessageW(w, WM_CLOSE, 0, 0);
-                let mut rest = PV.with_borrow(|p| p.0.clone());
-                rest.remove(k);
-                if rest.is_empty() {
+                v.remove(k);
+                if v.is_empty() {
                     hide_preview();
                 } else {
-                    let mut wr: RECT = zeroed();
-                    GetWindowRect(hwnd, &mut wr);
-                    layout(hwnd, rest, if vert() { (wr.top + wr.bottom) / 2 } else { (wr.left + wr.right) / 2 });
+                    relayout(hwnd, v);
                 }
             } else {
                 hide_preview();
@@ -247,7 +294,17 @@ pub(crate) unsafe extern "system" fn pv_proc(hwnd: HWND, msg: u32, wp: WPARAM, l
 
 #[cfg(test)]
 mod tests {
-    use super::grid;
+    use super::{close_rect, grid, move_rects};
+    use windows_sys::Win32::Foundation::RECT;
+
+    #[test]
+    fn move_arrows_sit_left_of_the_close_box_without_overlap() {
+        let card = RECT { left: 0, top: 0, right: 220, bottom: 160 };
+        let (c, (l, r)) = (close_rect(&card), move_rects(&card));
+        assert!(l.right <= r.left && r.right <= c.left, "{} {} {} {}", l.right, r.left, r.right, c.left);
+        assert!(l.left > 30, "the title keeps room after the icon");
+        assert_eq!((l.top, r.bottom), (c.top, c.bottom));
+    }
 
     #[test]
     fn grid_balances_rows_and_centers_the_last_one() {

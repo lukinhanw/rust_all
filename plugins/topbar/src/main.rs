@@ -226,7 +226,7 @@ thread_local! {
     static TF_ANIM: Cell<(u64, i32, i32)> = const { Cell::new((0, 0, 0)) }; // tray flyout: when it opened, its final x, y
     static FHOT: Cell<i32> = const { Cell::new(-1) };
     static HOT: Cell<i32> = const { Cell::new(NONE) };
-    static ORDER: RefCell<Vec<HWND>> = const { RefCell::new(Vec::new()) }; // unpinned windows in the order their buttons were added
+    static ORDER: RefCell<Vec<HWND>> = const { RefCell::new(Vec::new()) }; // windows in the order they appeared (preview arrows swap two)
     static HV: RefCell<HashMap<i32, (f32, u64)>> = RefCell::new(HashMap::new()); // hover fade per element: (0..1, last update ms)
     static BUSY: Cell<bool> = const { Cell::new(false) }; // a fade is still running: the painter asks for another frame
     static BAR_P: Cell<f32> = const { Cell::new(0.0) }; // bar slide: 0 = off screen, 1 = in place
@@ -612,7 +612,7 @@ unsafe extern "system" fn sw_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
     let (x, y) = ((lp & 0xffff) as i16 as i32, (lp >> 16) as i16 as i32);
     let at = || SW_CARDS.with_borrow(|(r, _)| thumbs::card_at(r, x, y));
     match msg {
-        WM_PAINT => SW.with_borrow(|(v, sel)| SW_CARDS.with_borrow(|(r, ids)| thumbs::paint(hwnd, v, r, ids, Some(*sel)))),
+        WM_PAINT => SW.with_borrow(|(v, sel)| SW_CARDS.with_borrow(|(r, ids)| thumbs::paint(hwnd, v, r, ids, Some(*sel), false))),
         WM_MOUSEACTIVATE => return MA_NOACTIVATE as isize,
         // the pointer picks a card, a click switches to it, a middle click or × closes it, the wheel steps through
         WM_MOUSEMOVE => {
@@ -1199,35 +1199,32 @@ fn refresh_buttons() {
     unsafe { EnumWindows(Some(collect), &mut wins as *mut _ as LPARAM) };
     let mut btns = vec![Btn { pin: None, wins: vec![], icon: null_mut() }];
     PINS.with_borrow(|pins| btns.extend((0..pins.len()).map(|i| Btn { pin: Some(i), wins: vec![], icon: null_mut() })));
-    let mut loose: Vec<HWND> = Vec::new();
-    for w in wins {
-        let exe = unsafe { exe_of(w) };
-        let pin = PINS.with_borrow(|p| p.iter().position(|p| !p.target.is_empty() && p.target == exe));
-        match pin {
-            Some(i) => btns[1 + i].wins.push(w),
-            None => loose.push(w),
-        }
-    }
-    // EnumWindows lists by z-order, so clicking a window would jump its button to the front: keep the order they first appeared in
+    // EnumWindows lists by z-order, so clicking a window would jump its button and its preview to the front: keep the
+    // order the windows first appeared in (the arrows on a preview card are the only way to change it)
+    let order = ORDER.with_borrow_mut(|o| {
+        o.retain(|w| wins.contains(w));
+        o.extend(wins.iter().filter(|w| !o.contains(w)).copied().collect::<Vec<_>>());
+        o.clone()
+    });
     let mut keys: Vec<String> = vec![String::new(); btns.len()]; // keys[i] belongs to btns[i]; "" matches nothing
-    ORDER.with_borrow_mut(|o| {
-        o.retain(|w| loose.contains(w));
-        o.extend(loose.iter().filter(|w| !o.contains(w)).copied().collect::<Vec<_>>());
-        for &w in o.iter() {
-            // windows of one app share a button (a click then offers the list); generic hosts (Store apps, java...) stay apart (#90)
-            // the window's own AppUserModelID is part of the key: a web app installed from Brave runs as brave.exe too (#118, #117)
-            let exe = unsafe { exe_of(w) };
-            let key = format!("{exe}|{}", unsafe { win_aumid(w) });
-            let same = (!exe.is_empty() && !is_host(&exe)).then(|| keys.iter().position(|k| *k == key)).flatten();
-            match same {
-                Some(i) => btns[i].wins.push(w),
-                None => {
-                    btns.push(Btn { pin: None, wins: vec![w], icon: unsafe { win_icon(w) } });
-                    keys.push(key);
-                }
+    for w in order {
+        let exe = unsafe { exe_of(w) };
+        if let Some(i) = PINS.with_borrow(|p| p.iter().position(|p| !p.target.is_empty() && p.target == exe)) {
+            btns[1 + i].wins.push(w);
+            continue;
+        }
+        // windows of one app share a button (a click then offers the list); generic hosts (Store apps, java...) stay apart (#90)
+        // the window's own AppUserModelID is part of the key: a web app installed from Brave runs as brave.exe too (#118, #117)
+        let key = format!("{exe}|{}", unsafe { win_aumid(w) });
+        let same = (!exe.is_empty() && !is_host(&exe)).then(|| keys.iter().position(|k| *k == key)).flatten();
+        match same {
+            Some(i) => btns[i].wins.push(w),
+            None => {
+                btns.push(Btn { pin: None, wins: vec![w], icon: unsafe { win_icon(w) } });
+                keys.push(key);
             }
         }
-    });
+    }
     BTNS.set(btns);
 }
 
