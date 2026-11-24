@@ -1251,9 +1251,35 @@ unsafe fn become_taskman(bar: HWND) {
     RegisterShellHookWindow(bar);
 }
 
+/// An open (not minimized) window parked where Windows keeps hidden minimized ones (-32000, -32000): nothing shows it, and
+/// activating it plays a restore animation that flies off screen ("it opens and minimizes at once"). Seen with Opera after
+/// the shell / bar restarted; whatever moved it, the window is put back in the middle of the work area.
+unsafe fn stuck_off_screen(w: HWND) -> bool {
+    let mut r: RECT = zeroed();
+    IsWindowVisible(w) != 0 && IsIconic(w) == 0 && GetWindowRect(w, &mut r) != 0 && r.left <= -30000 && r.top <= -30000
+}
+unsafe fn rescue(w: HWND) {
+    let (mut r, mut wa): (RECT, RECT) = (zeroed(), zeroed());
+    GetWindowRect(w, &mut r);
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut wa as *mut RECT as _, 0);
+    let (ww, wh) = (wa.right - wa.left, wa.bottom - wa.top);
+    let (w0, h0) = ((r.right - r.left).clamp(sc(320), ww * 9 / 10), (r.bottom - r.top).clamp(sc(240), wh * 9 / 10));
+    SetWindowPos(w, null_mut(), wa.left + (ww - w0) / 2, wa.top + (wh - h0) / 2, w0, h0, SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+thread_local! {
+    static STUCK: RefCell<Vec<HWND>> = const { RefCell::new(Vec::new()) }; // off screen at the last refresh (rescued if still so)
+}
+
 fn refresh() {
     refresh_buttons();
     BTNS.with_borrow(|b| b.iter().flat_map(|b| &b.wins).for_each(|&w| unsafe { hide_stub(w) }));
+    // off screen two refreshes in a row (half a second apart: never a window passing through a minimize / restore)
+    let stuck: Vec<HWND> = BTNS.with_borrow(|b| b.iter().flat_map(|b| &b.wins).copied().filter(|&w| unsafe { stuck_off_screen(w) }).collect());
+    for &w in stuck.iter().filter(|w| STUCK.with_borrow(|s| s.contains(w))) {
+        unsafe { rescue(w) };
+    }
+    STUCK.set(stuck);
     let n = TICK.get();
     TICK.set(n + 1);
     unsafe {
