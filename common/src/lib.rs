@@ -18,6 +18,7 @@ pub mod proc;
 pub mod reg;
 pub mod settings;
 pub mod style;
+pub mod wallpaper;
 
 /// "Show in folder": opens `path`'s folder with the file selected in the installed rust-explorer, else in Windows Explorer.
 pub fn reveal(path: &str) {

@@ -123,6 +123,19 @@ static SHOW_HIDDEN: AtomicBool = AtomicBool::new(false); // Ctrl+H
 static NAV: AtomicBool = AtomicBool::new(false); // loading from the back / forward trail: do not record it again
 const WM_NAV: u32 = WM_APP + 3; // wp: 1 back, 2 forward, 3 properties, 4 up (sent from the message loop for Alt+key)
 const WM_JOB: u32 = WM_APP + 5; // jobs.rs worker finished: wp = Box<Option<String>> (the error, if any)
+const WM_WALL: u32 = WM_APP + 6; // desktop: the wallpaper BMP was remade, paint the new picture
+
+/// Desktop: remakes the wallpaper BMP in the background when the user's wallpaper is not the one it was made from (a new
+/// picture set in Settings, rust-settings or "Set as desktop background"), then tells the window to paint it. Before, the
+/// BMP was made only by rs-shell at sign-in, so a changed wallpaper never showed.
+fn sync_wall(h: HWND) {
+    let h = h as isize;
+    std::thread::spawn(move || {
+        if winrust_common::wallpaper::sync().1 {
+            unsafe { PostMessageW(h as HWND, WM_WALL, 0, 0) };
+        }
+    });
+}
 
 /// The Recycle Bin's row on the desktop. It is no file: its name is the shell's parsing name, which no real file can have
 /// (a `:` is not allowed in file names), so every place that turns rows into paths can tell it apart.
@@ -1617,6 +1630,7 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                     for msg in [LVM_SETBKCOLOR, LVM_SETTEXTBKCOLOR] { put(list, msg, 0, CLR_NONE); }
                     put(list, LVM_SETTEXTCOLOR, 0, 0x00FF_FFFF);
                     reload_wall();
+                    sync_wall(h); // the wallpaper may have changed while no desktop was up (Settings lends Explorer the screen)
                     // grey (not ClearType) smoothing: on a live wallpaper the labels sit on a colour key, where ClearType leaves coloured fringes
                     put(list, WM_SETFONT, windows_sys::Win32::Graphics::Gdi::CreateFontW(-ui::sc(13), 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 4, 0, w(ui::ui_face()).as_ptr()) as usize, 1);
                     // like explorer's desktop: wallpaper apps look for a SHELLDLL_DefView under Progman
@@ -1662,7 +1676,14 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                     InvalidateRect(h, ptr::null(), 1);
                 } else if wp == SPI_SETWORKAREA as usize {
                     place_desk_list(ST.with_borrow(|st| st.list));
+                } else if wp == SPI_SETDESKWALLPAPER as usize || wp == 0 {
+                    sync_wall(h); // a new wallpaper (wp 0: some setters only say "Control Panel\Desktop" changed)
                 }
+                0
+            }
+            WM_WALL if desk() => {
+                reload_wall();
+                InvalidateRect(h, ptr::null(), 1);
                 0
             }
             // mouse buttons 4 / 5 (and keyboard media keys) arrive as APPCOMMAND_BROWSER_BACKWARD / _FORWARD
