@@ -1237,6 +1237,20 @@ unsafe fn hide_stub(w: HWND) {
     }
 }
 
+/// Without explorer nobody is the "taskman" window, so Windows treats minimized windows as loose icons and leaves them as
+/// caption stubs on the desktop. Becoming that window (what explorer's taskbar does) makes them hide properly and gets us
+/// HSHELL_GETMINRECT: the minimize / restore animation flies to our button. Call only while explorer's taskbar is absent.
+unsafe fn become_taskman(bar: HWND) {
+    if bar.is_null() {
+        return;
+    }
+    if let Some(f) = GetProcAddress(GetModuleHandleW(wide("user32.dll").as_ptr()), b"SetTaskmanWindow\0".as_ptr()) {
+        std::mem::transmute::<_, unsafe extern "system" fn(HWND) -> i32>(f)(bar);
+    }
+    DeregisterShellHookWindow(bar); // registering twice is refused; a fresh registration is what we want
+    RegisterShellHookWindow(bar);
+}
+
 fn refresh() {
     refresh_buttons();
     BTNS.with_borrow(|b| b.iter().flat_map(|b| &b.wins).for_each(|&w| unsafe { hide_stub(w) }));
@@ -1249,6 +1263,9 @@ fn refresh() {
         read_volume();
         let up = !find_other("Shell_TrayWnd").is_null();
         if EXPLORER_UP.swap(up, Relaxed) && !up {
+            // Explorer's taskbar was the taskman / shell hook window and took that with it: without this, minimize and
+            // restore animate to the bottom left corner instead of our button (rs-shell ends Explorer after we started)
+            become_taskman(BAR.load(Relaxed) as HWND);
             place(BAR.load(Relaxed) as HWND); // Explorer (started for Settings) is gone and took the reserved strip with it
             // icons that apps put into Explorer's (hidden) tray went with it: ask every app to register again, now with us.
             // The empty-tray check below misses this when some icons already reached the bar.
@@ -2511,7 +2528,16 @@ unsafe fn click(h: i32, left: bool, mid: bool) {
 #[repr(C)]
 struct ShellHookInfo {
     hwnd: HWND,
-    rc: RECT,
+    /// Not a RECT: user32 packs the rectangle into 16-bit left, top, right, bottom here (it unpacks them back into the
+    /// RECT the minimize animation uses). Written as 32-bit RECT fields, Windows read (left, 0, top, 0): an empty
+    /// rectangle, and the window faded out instead of flying to its button.
+    rc: [i16; 4],
+}
+impl ShellHookInfo {
+    fn set(&mut self, r: RECT) {
+        let c = |v: i32| v.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+        self.rc = [c(r.left), c(r.top), c(r.right), c(r.bottom)];
+    }
 }
 
 /// HSHELL_GETMINRECT: a window is minimizing / restoring and asks where its taskbar button is: the shrink animation
@@ -2526,11 +2552,11 @@ unsafe fn min_rect(info: *mut ShellHookInfo, bar: HWND) {
     };
     if vert() {
         let left = bar_x() + sc(4);
-        (*info).rc = RECT { left, top: x, right: left + bar_h() - sc(8), bottom: x + l.bw };
+        (*info).set(RECT { left, top: x, right: left + bar_h() - sc(8), bottom: x + l.bw });
         return;
     }
     let (top, x) = (bar_top() + sc(4), x + bar_x_w().0);
-    (*info).rc = RECT { left: x, top, right: x + l.bw, bottom: top + bar_h() - sc(8) };
+    (*info).set(RECT { left: x, top, right: x + l.bw, bottom: top + bar_h() - sc(8) });
 }
 
 /// Screen x of the middle of a bar element, for its tooltip and menus.
@@ -2815,14 +2841,10 @@ fn main() {
         thumbs::PVWND.set(CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE, pvc.as_ptr(), null(), WS_POPUP, 0, 0, 1, 1, null_mut(), null_mut(), hi, null()));
         OLD_STATE.set(remember_taskbar_state());
         appbar_new(hwnd);
-        // Without explorer nobody is the "taskman" window, so Windows treats minimized windows as loose icons and leaves
-        // them as caption stubs on the desktop. Becoming that window (what explorer's taskbar does) makes them hide properly
-        // and gets us HSHELL_GETMINRECT. Only when explorer's taskbar is absent: with it running its own registration stays.
+        // Only when explorer's taskbar is absent: with it running its own registration stays. If it is still up now
+        // (rs-shell --overlay starts us first and ends Explorer a few seconds later), refresh() does this once it is gone.
         if find_other("Shell_TrayWnd").is_null() {
-            if let Some(f) = GetProcAddress(GetModuleHandleW(wide("user32.dll").as_ptr()), b"SetTaskmanWindow\0".as_ptr()) {
-                std::mem::transmute::<_, unsafe extern "system" fn(HWND) -> i32>(f)(hwnd);
-            }
-            RegisterShellHookWindow(hwnd);
+            become_taskman(hwnd);
         }
         hide_taskbar();
         place(hwnd);
