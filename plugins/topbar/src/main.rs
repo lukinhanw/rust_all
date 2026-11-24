@@ -33,7 +33,7 @@ use {tray::*, status::*, run::*, shot::*, lang::*, settings::*};
 use windows::{
     Win32::{
         Media::Audio::{Endpoints::IAudioEndpointVolume, IMMDeviceEnumerator, MMDeviceEnumerator, eConsole, eRender},
-        System::Com::{CLSCTX_ALL, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, IPersistFile, STGM},
+        System::Com::{CLSCTX_ALL, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, IPersistFile, STGM},
         UI::Shell::{IShellLinkW, ShellLink},
     },
     core::{Interface, PCWSTR},
@@ -2007,12 +2007,12 @@ unsafe fn msix_app_id(lnk: &str) -> Option<String> {
     fly::apps_folder().into_iter().map(|a| a.1).find(|id| id.to_lowercase().starts_with(&prefix))
 }
 
-/// Starts a Store app by its app id. false = it did not start (the caller falls back to explorer).
-unsafe fn activate_app(aumid: &str) -> bool {
+/// Starts a Store app by its app id: its process id, None when it did not start.
+unsafe fn activate_app(aumid: &str) -> Option<u32> {
     use windows::Win32::UI::Shell::{ACTIVATEOPTIONS, ApplicationActivationManager, IApplicationActivationManager};
     CoCreateInstance::<_, IApplicationActivationManager>(&ApplicationActivationManager, None, CLSCTX_ALL)
         .and_then(|m| m.ActivateApplication(PCWSTR(wide(aumid).as_ptr()), PCWSTR::null(), ACTIVATEOPTIONS(0)))
-        .is_ok()
+        .ok()
 }
 
 /// Opens a file, shortcut or URI through explorer, which starts it with the desktop user's normal token: the bar itself
@@ -2029,7 +2029,15 @@ unsafe fn open(path: &[u16]) {
     // Store (MSIX) apps: by app id through the activation manager. A path into the protected package folder ("no app
     // associated") and shell:AppsFolder via explorer ("class not registered" when Explorer is not the shell) both fail.
     let aumid = if p.to_lowercase().starts_with(r"shell:appsfolder\") { Some(p[r"shell:appsfolder\".len()..].to_string()) } else { msix_app_id(&p) };
-    if aumid.is_some_and(|id| activate_app(&id)) {
+    if let Some(id) = aumid {
+        // on a thread of its own: activation can hang ~15 s and then fail (UWP apps such as Calculator open only while
+        // Explorer is the shell), and this thread also runs the keyboard hook, so every key in the system would wait with it
+        thread::spawn(move || unsafe {
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+            if activate_app(&id).is_none() {
+                let _ = Command::new("explorer.exe").arg(&p).spawn();
+            }
+        });
         return;
     }
     // Always through explorer.exe: it starts the target with the desktop user's normal token. ShellExecuteW from here would
