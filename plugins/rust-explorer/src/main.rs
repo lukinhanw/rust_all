@@ -25,6 +25,7 @@ use windows_sys::Win32::{Foundation::*, Graphics::Gdi::{GetStockObject, Invalida
 mod zipx; // our own ZIP engine (deflate, inflate, container)
 mod jobs; // our own copier, ZIP packer, ZIP/7z unpacker (background, progress in the status line)
 mod shellwin; // registers the window as a shell window: "Show in folder" from other apps selects the file
+mod menu; // right-click menus drawn like Windows 11's
 mod ui; // the look: palette, painted tabs / toolbar / address pill / status line, dark theme
 
 static DESKTOP: AtomicBool = AtomicBool::new(false);
@@ -509,46 +510,57 @@ fn set_icons_hidden(hide: bool) {
     unsafe { ShowWindow(list, if hide { SW_HIDE } else { SW_SHOW }) };
 }
 
-/// Right click on empty space: the folder's own menu.
+/// Right click on empty space: the folder's own menu, laid out and drawn like Windows 11's (View / Sort by / Group by
+/// submenus, New, Paste, Properties; Fluent icons, rounded corners; light or dark with Windows on the desktop).
 #[allow(unsafe_op_in_unsafe_fn)]
 unsafe fn bg_menu(h: HWND) {
+    use menu::{Mark, add};
     let m = CreatePopupMenu();
-    let items = [
-        (1usize, t!("Новая папка", "New folder", ja: "新しいフォルダー", pt: "Nova pasta")),
-        (2, t!("Новый текстовый файл", "New text file", ja: "新しいテキスト ファイル", pt: "Novo arquivo de texto")),
-        (3, t!("Вставить", "Paste", ja: "貼り付け", pt: "Colar")),
-        (4, t!("Обновить", "Refresh", ja: "最新の情報に更新", pt: "Atualizar")),
-        (5, t!("Свойства", "Properties", ja: "プロパティ", pt: "Propriedades")),
-    ];
-    for (id, t) in items { AppendMenuW(m, MF_STRING, id, w(t).as_ptr()); }
-    let disk = tool("wiztree");
-    if disk.is_some() { AppendMenuW(m, MF_STRING, 6, w(t!("Занятое место (WinRust Disk)", "Disk usage (WinRust Disk)", ja: "ディスク使用量 (WinRust Disk)", pt: "Uso do disco (WinRust Disk)")).as_ptr()); }
     if desk() {
-        let sort = [
-            (8usize, t!("Упорядочить по имени", "Sort icons by name", ja: "名前で並べ替え", pt: "Classificar ícones por nome")),
-            (9, t!("Упорядочить по дате", "Sort icons by date", ja: "日付で並べ替え", pt: "Classificar ícones por data")),
-            (10, t!("Упорядочить по размеру", "Sort icons by size", ja: "サイズで並べ替え", pt: "Classificar ícones por tamanho")),
-            (11, t!("Выровнять значки", "Arrange icons", ja: "アイコンを整列", pt: "Organizar ícones")),
-        ];
-        for (id, l) in sort { AppendMenuW(m, MF_STRING, id, w(l).as_ptr()); }
+        // Exibir: icon size (the chosen one dotted) and the icons on / off, as on the Windows desktop
+        let view = CreatePopupMenu();
+        let small = small_marker().exists();
+        add(view, 14, t!("Крупные значки", "Large icons", ja: "大アイコン", pt: "Ícones grandes"), None, None, if small { Mark::None } else { Mark::Dot });
+        add(view, 15, t!("Мелкие значки", "Small icons", ja: "小アイコン", pt: "Ícones pequenos"), None, None, if small { Mark::Dot } else { Mark::None });
+        menu::sep(view);
+        add(view, 7, t!("Показывать значки рабочего стола", "Show desktop icons", ja: "デスクトップ アイコンの表示", pt: "Mostrar ícones da área de trabalho"), None, None, if icons_hidden() { Mark::None } else { Mark::Tick });
+        add(m, 0, t!("Вид", "View", pt: "Exibir"), Some("\u{E8A9}"), Some(view), Mark::None);
+        let sort = CreatePopupMenu();
+        add(sort, 8, t!("Имя", "Name", pt: "Nome"), None, None, Mark::None);
+        add(sort, 10, t!("Размер", "Size", pt: "Tamanho"), None, None, Mark::None);
+        add(sort, 9, t!("Дата изменения", "Date modified", pt: "Data de modificação"), None, None, Mark::None);
+        menu::sep(sort);
+        add(sort, 11, t!("Выровнять значки", "Arrange icons", ja: "アイコンを整列", pt: "Organizar ícones"), None, None, Mark::None);
+        add(m, 0, t!("Сортировка", "Sort by", pt: "Classificar por"), Some("\u{E8CB}"), Some(sort), Mark::None);
+    } else {
+        let group = CreatePopupMenu();
+        let on = group_on();
+        add(group, 13, t!("Дата изменения", "Date modified", pt: "Data de modificação"), None, None, if on { Mark::Dot } else { Mark::None });
+        add(group, 16, t!("(Нет)", "(None)", pt: "(Nenhum)"), None, None, if on { Mark::None } else { Mark::Dot });
+        add(m, 0, t!("Группировка", "Group by", pt: "Agrupar por"), Some("\u{E8FD}"), Some(group), Mark::None);
     }
-    if !desk() { AppendMenuW(m, MF_STRING, 13, w(if group_on() { t!("Без группировки", "No grouping", ja: "グループ化しない", pt: "Sem agrupamento") } else { t!("Группировать по дате", "Group by date", ja: "日付でグループ化", pt: "Agrupar por data") }).as_ptr()); }
-    if desk() { AppendMenuW(m, MF_STRING, 12, w(if small_marker().exists() { t!("Крупные значки", "Large icons", ja: "大アイコン", pt: "Ícones grandes") } else { t!("Мелкие значки", "Small icons", ja: "小アイコン", pt: "Ícones pequenos") }).as_ptr()); }
-    if desk() { AppendMenuW(m, MF_STRING, 7, w(if icons_hidden() { t!("Показать значки рабочего стола", "Show desktop icons", ja: "デスクトップ アイコンを表示", pt: "Mostrar ícones da área de trabalho") } else { t!("Скрыть значки рабочего стола", "Hide desktop icons", ja: "デスクトップ アイコンを非表示", pt: "Ocultar ícones da área de trabalho") }).as_ptr()); }
-    let mut pt: POINT = std::mem::zeroed();
-    GetCursorPos(&mut pt);
-    let id = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, h, ptr::null());
-    DestroyMenu(m);
+    add(m, 4, t!("Обновить", "Refresh", ja: "最新の情報に更新", pt: "Atualizar"), Some("\u{E72C}"), None, Mark::None);
+    menu::sep(m);
+    let new = CreatePopupMenu();
+    add(new, 1, t!("Папку", "Folder", pt: "Pasta"), Some("\u{E8B7}"), None, Mark::None);
+    add(new, 2, t!("Текстовый документ", "Text document", pt: "Documento de texto"), Some("\u{E8A5}"), None, Mark::None);
+    add(m, 0, t!("Создать", "New", pt: "Novo"), Some("\u{ECC8}"), Some(new), Mark::None);
+    add(m, 3, t!("Вставить", "Paste", ja: "貼り付け", pt: "Colar"), Some("\u{E77F}"), None, Mark::None);
+    menu::sep(m);
+    let disk = tool("wiztree");
+    if disk.is_some() { add(m, 6, t!("Занятое место (WinRust Disk)", "Disk usage (WinRust Disk)", ja: "ディスク使用量 (WinRust Disk)", pt: "Uso do disco (WinRust Disk)"), Some("\u{EDA2}"), None, Mark::None); }
+    add(m, 5, t!("Свойства", "Properties", ja: "プロパティ", pt: "Propriedades"), Some("\u{E90F}"), None, Mark::None);
+    let id = menu::track(m, h);
     let dir = cur_dir();
     match id {
         7 => set_icons_hidden(!icons_hidden()),
-        13 => {
+        13 | 16 => { // group by date on (13) / off (16)
             let k = group_marker();
-            if group_on() { let _ = fs::remove_file(&k); } else { if let Some(d) = k.parent() { let _ = fs::create_dir_all(d); } let _ = fs::write(&k, "1"); }
+            if id == 16 { let _ = fs::remove_file(&k); } else { if let Some(d) = k.parent() { let _ = fs::create_dir_all(d); } let _ = fs::write(&k, "1"); }
         }
-        12 => { // the grid changes with the size: icons are laid out again
+        14 | 15 if (id == 15) != small_marker().exists() => { // large (14) / small (15); the grid changes with the size: icons are laid out again
             let k = small_marker();
-            if k.exists() { let _ = fs::remove_file(&k); } else { let _ = fs::write(&k, "1"); }
+            if id == 14 { let _ = fs::remove_file(&k); } else { let _ = fs::write(&k, "1"); }
             apply_icon_size(ST.with_borrow(|st| st.list));
             let _ = fs::remove_file(desk::pos_file());
         }
@@ -1760,6 +1772,9 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                 wp.flags |= SWP_NOACTIVATE;
                 0
             }
+            WM_MEASUREITEM if menu::measure(lp) => 1,
+            WM_DRAWITEM if menu::draw(lp) => 1,
+            WM_ENTERIDLE if wp == MSGF_MENU as usize => { menu::round_open(); 0 }
             WM_INITMENUPOPUP if sh::menu_msg(m, wp, lp) => 0,
             WM_DRAWITEM | WM_MEASUREITEM if sh::menu_msg(m, wp, lp) => 1,
             WM_NOTIFY => {
@@ -2008,7 +2023,7 @@ fn main() {
         SetProcessDPIAware(); // sharp text at any scaling; every size below goes through ui::sc
         ui::init_scale();
         ui::gdiplus_start();
-        ui::dark_mode();
+        ui::dark_mode(env::args().nth(1).as_deref() == Some("--desktop"));
         InitCommonControlsEx(&INITCOMMONCONTROLSEX { dwSize: size_of::<INITCOMMONCONTROLSEX>() as u32, dwICC: ICC_LISTVIEW_CLASSES });
         let inst = GetModuleHandleW(ptr::null());
         let cls = w("RustExplorer");

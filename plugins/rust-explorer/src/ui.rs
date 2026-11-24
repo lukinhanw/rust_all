@@ -132,14 +132,35 @@ pub fn dark_title(h: HWND) {
     }
 }
 
-/// Dark context menus / scrollbars for the whole process (uxtheme's unnamed exports 135 and 136). Missing = stays light.
-pub fn dark_mode() {
+/// Context menus are drawn dark (the file manager, always; the desktop, when Windows' app mode is dark).
+static MENU_DARK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Windows' "app mode" (Settings > Personalization > Colors): HKCU ...\Themes\Personalize\AppsUseLightTheme, light if unset.
+fn apps_light() -> bool {
+    use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
+    let (mut v, mut n) = (1u32, 4u32);
+    let r = unsafe { RegGetValueW(HKEY_CURRENT_USER, w(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize").as_ptr(), w("AppsUseLightTheme").as_ptr(), RRF_RT_REG_DWORD, ptr::null_mut(), &mut v as *mut u32 as _, &mut n) };
+    r != 0 || v != 0
+}
+
+/// Context menus / scrollbars for the whole process (uxtheme's unnamed exports 135 and 136). Missing = stays light.
+/// The file manager is always dark; the desktop follows Windows' light / dark app mode, so its right-click menu looks like
+/// the Windows 11 desktop's own.
+pub fn dark_mode(desktop: bool) {
+    let dark = !desktop || !apps_light();
+    MENU_DARK.store(dark, Relaxed);
     unsafe {
         let m = LoadLibraryW(w("uxtheme.dll").as_ptr());
         if m.is_null() { return; }
-        if let Some(f) = GetProcAddress(m, 135usize as *const u8) { std::mem::transmute::<_, extern "system" fn(i32) -> i32>(f)(2); } // SetPreferredAppMode(ForceDark)
+        // SetPreferredAppMode: 2 ForceDark, 3 ForceLight
+        if let Some(f) = GetProcAddress(m, 135usize as *const u8) { std::mem::transmute::<_, extern "system" fn(i32) -> i32>(f)(if dark { 2 } else { 3 }); }
         if let Some(f) = GetProcAddress(m, 136usize as *const u8) { std::mem::transmute::<_, extern "system" fn()>(f)(); } // FlushMenuThemes
     }
+}
+
+/// The right-click menus are dark (see dark_mode).
+pub fn menu_dark() -> bool {
+    MENU_DARK.load(Relaxed)
 }
 
 /// The WinRust style changed (the topbar's broadcast): the lists take the new colours and font, everything repaints.
@@ -452,7 +473,11 @@ pub fn gdiplus_start() {
 
 /// Fills `r` (right / bottom exclusive) in `c`; `rad` > 0 rounds the corners (rad = corner diameter), anti-aliased.
 unsafe fn fill(dc: HDC, r: RECT, c: u32, rad: i32) {
-    let rad = if winrust_common::style::style().square() { 0 } else { rad };
+    fill_raw(dc, r, c, if winrust_common::style::style().square() { 0 } else { rad });
+}
+
+/// `fill` that keeps the rounding in the square styles too (the right-click menus look like Windows 11's in every style).
+pub(crate) unsafe fn fill_raw(dc: HDC, r: RECT, c: u32, rad: i32) {
     use windows_sys::Win32::Graphics::GdiPlus::*;
     let (wd, ht) = ((r.right - r.left) as f32, (r.bottom - r.top) as f32);
     if wd <= 0.0 || ht <= 0.0 { return; }
@@ -488,7 +513,7 @@ unsafe fn fill(dc: HDC, r: RECT, c: u32, rad: i32) {
     GdipDeleteGraphics(g);
 }
 
-unsafe fn text(dc: HDC, s: &str, mut r: RECT, c: u32, flags: u32) {
+pub(crate) unsafe fn text(dc: HDC, s: &str, mut r: RECT, c: u32, flags: u32) {
     SetTextColor(dc, c);
     DrawTextW(dc, w(s).as_ptr(), -1, &mut r, flags | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | DT_END_ELLIPSIS);
 }
