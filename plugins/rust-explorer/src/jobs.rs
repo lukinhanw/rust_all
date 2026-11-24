@@ -41,10 +41,10 @@ pub fn status_text() -> Option<String> {
     let secs = p.started.elapsed().as_secs_f64().max(0.1);
     let mut s = p.what.clone();
     if tf > 0 {
-        s += &format!("  \u{00B7}  {f} of {tf} files");
+        s += &tf!("  \u{00B7}  файлов: {} из {}", "  \u{00B7}  {} of {} files", pt: "  \u{00B7}  {} de {} arquivos", f, tf);
     }
     if tb > 0 {
-        s += &format!("  \u{00B7}  {} of {} ({}%)  \u{00B7}  {}/s", super::size_text(b), super::size_text(tb), b * 100 / tb.max(1), super::size_text((b as f64 / secs) as u64));
+        s += &tf!("  \u{00B7}  {} из {} ({}%)  \u{00B7}  {}/с", "  \u{00B7}  {} of {} ({}%)  \u{00B7}  {}/s", pt: "  \u{00B7}  {} de {} ({}%)  \u{00B7}  {}/s", super::size_text(b), super::size_text(tb), b * 100 / tb.max(1), super::size_text((b as f64 / secs) as u64));
     }
     Some(s + "\u{2026}")
 }
@@ -182,14 +182,14 @@ fn copy_file(src: &Path, dst: &Path, size: u64, p: &Progress) -> std::io::Result
 /// Copies `from` into `to` (names that exist there get " (2)"); `then_delete` = a move across drives: the sources go away
 /// only when every file arrived.
 pub fn copy(h: isize, from: Vec<PathBuf>, to: PathBuf, then_delete: bool) -> bool {
-    let what = if then_delete { "Moving" } else { "Copying" }.to_string();
+    let what = if then_delete { t!("Перемещение", "Moving", pt: "Movendo") } else { t!("Копирование", "Copying", pt: "Copiando") }.to_string();
     spawn(h, what, move |p| copy_now(&from, &to, then_delete, p))
 }
 
 fn copy_now(from: &[PathBuf], to: &Path, then_delete: bool, p: &Progress) -> Result<(), String> {
     let mut entries = vec![];
     for src in from {
-        let name = src.file_name().ok_or_else(|| format!("{}: no name", src.display()))?.to_string_lossy().into_owned();
+        let name = src.file_name().ok_or_else(|| tf!("{}: нет имени", "{}: no name", pt: "{}: sem nome", src.display()))?.to_string_lossy().into_owned();
         let top = free_name(to, &name, src.is_dir());
         walk(src, PathBuf::from(top.file_name().unwrap()), &mut entries).map_err(|e| format!("{}: {e}", src.display()))?;
     }
@@ -220,14 +220,14 @@ fn copy_now(from: &[PathBuf], to: &Path, then_delete: bool, p: &Progress) -> Res
     });
     let errors = errors.into_inner().unwrap();
     if !errors.is_empty() {
-        let more = if errors.len() > 5 { format!("\n... and {} more", errors.len() - 5) } else { String::new() };
-        let kept = if then_delete { "\nNothing was deleted from the source." } else { "" };
-        return Err(format!("{} file(s) were not copied:\n{}{more}{kept}", errors.len(), errors[..errors.len().min(5)].join("\n")));
+        let more = if errors.len() > 5 { tf!("\n... и ещё {}", "\n... and {} more", pt: "\n... e mais {}", errors.len() - 5) } else { String::new() };
+        let kept = if then_delete { t!("\nИз источника ничего не удалено.", "\nNothing was deleted from the source.", pt: "\nNada foi apagado da origem.") } else { "" };
+        return Err(tf!("Не скопировано файлов: {}\n{}{}{}", "{} file(s) were not copied:\n{}{}{}", pt: "{} arquivo(s) não foram copiados:\n{}{}{}", errors.len(), errors[..errors.len().min(5)].join("\n"), more, kept));
     }
     if then_delete {
         for src in from {
             let r = if fs::symlink_metadata(src).is_ok_and(|m| m.is_dir()) { fs::remove_dir_all(src) } else { fs::remove_file(src) };
-            r.map_err(|e| format!("Copied, but {} could not be removed: {e}", src.display()))?;
+            r.map_err(|e| tf!("Скопировано, но {} не удалось удалить: {}", "Copied, but {} could not be removed: {}", pt: "Copiado, mas não foi possível remover {}: {}", src.display(), e))?;
         }
     }
     Ok(())
@@ -239,7 +239,7 @@ fn copy_now(from: &[PathBuf], to: &Path, then_delete: bool, p: &Progress) -> Res
 const PAR_MAX: u64 = 64 << 20;
 
 pub fn zip(h: isize, from: Vec<PathBuf>, dest: PathBuf) -> bool {
-    let what = format!("Packing {}", dest.file_name().unwrap_or_default().to_string_lossy());
+    let what = tf!("Упаковка {}", "Packing {}", pt: "Compactando {}", dest.file_name().unwrap_or_default().to_string_lossy());
     spawn(h, what, move |p| zip_now(&from, &dest, p).inspect_err(|_| _ = fs::remove_file(&dest)).or_else(|e| if p.cancelled() { Ok(()) } else { Err(e) }))
 }
 
@@ -252,7 +252,7 @@ fn zip_now(from: &[PathBuf], dest: &Path, p: &Progress) -> Result<(), String> {
     use crate::zipx::{self, Prepared, Writer};
     let mut entries = vec![];
     for src in from {
-        let name = src.file_name().ok_or_else(|| format!("{}: no name", src.display()))?;
+        let name = src.file_name().ok_or_else(|| tf!("{}: нет имени", "{}: no name", pt: "{}: sem nome", src.display()))?;
         walk(src, PathBuf::from(name), &mut entries).map_err(|e| format!("{}: {e}", src.display()))?;
     }
     entries.retain(|e| e.0 != dest); // packing the folder the archive is written into
@@ -286,7 +286,7 @@ fn zip_now(from: &[PathBuf], dest: &Path, p: &Progress) -> Result<(), String> {
         drop(tx);
         for r in rx {
             if p.cancelled() {
-                return Err("Cancelled".to_string());
+                return Err(t!("Отменено", "Cancelled", pt: "Cancelado").to_string());
             }
             let f = r?;
             let n = f.uncompressed_size();
@@ -311,7 +311,7 @@ pub fn is_archive(p: &Path) -> bool {
 
 /// Unpacks each archive into a new folder named after it, next to it.
 pub fn extract(h: isize, archives: Vec<PathBuf>, dir: PathBuf) -> bool {
-    let what = format!("Extracting {}", archives.iter().map(|a| a.file_name().unwrap_or_default().to_string_lossy()).collect::<Vec<_>>().join(", "));
+    let what = tf!("Распаковка {}", "Extracting {}", pt: "Extraindo {}", archives.iter().map(|a| a.file_name().unwrap_or_default().to_string_lossy()).collect::<Vec<_>>().join(", "));
     spawn(h, what, move |p| {
         p.total_files.store(archives.len() as u64, Relaxed);
         for a in &archives {

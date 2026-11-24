@@ -127,7 +127,7 @@ macro_rules! dot {
 }
 
 /// `t!("русский", "english", ja: "日本語", pt: "português")`: a text in the current language.
-/// Without `ja:`/`pt:` Japanese and Portuguese show the English text.
+/// Without `ja:`/`pt:` Japanese and Portuguese show the English text; `t!(ru, en, pt: ..)` has Portuguese only.
 #[macro_export]
 macro_rules! t {
     ($ru:expr, $en:expr, ja: $ja:expr, pt: $pt:expr $(,)?) => {
@@ -138,13 +138,20 @@ macro_rules! t {
             $crate::Lang::Pt => $pt,
         }
     };
+    ($ru:expr, $en:expr, pt: $pt:expr $(,)?) => {
+        match $crate::lang!() {
+            $crate::Lang::Ru => $ru,
+            $crate::Lang::Pt => $pt,
+            _ => $en,
+        }
+    };
     ($ru:expr, $en:expr) => {
         if $crate::lang!() == $crate::Lang::Ru { $ru } else { $en }
     };
 }
 
 /// `tf!("русский {}", "english {}", ja: "日本語 {}", pt: "português {}", args...)`: format! in the current language
-/// (all templates are checked at compile time). Without `ja:`/`pt:` they use the English one.
+/// (all templates are checked at compile time). Without `ja:`/`pt:` they use the English one; `pt:` alone is allowed too.
 #[macro_export]
 macro_rules! tf {
     ($ru:literal, $en:literal, ja: $ja:literal, pt: $pt:literal $(, $a:expr)* $(,)?) => {
@@ -153,6 +160,13 @@ macro_rules! tf {
             $crate::Lang::En => format!($en $(, $a)*),
             $crate::Lang::Ja => format!($ja $(, $a)*),
             $crate::Lang::Pt => format!($pt $(, $a)*),
+        }
+    };
+    ($ru:literal, $en:literal, pt: $pt:literal $(, $a:expr)* $(,)?) => {
+        match $crate::lang!() {
+            $crate::Lang::Ru => format!($ru $(, $a)*),
+            $crate::Lang::Pt => format!($pt $(, $a)*),
+            _ => format!($en $(, $a)*),
         }
     };
     ($ru:literal, $en:literal $(, $a:expr)* $(,)?) => {

@@ -185,7 +185,19 @@ fn sort_rows(rows: &mut [Row], col: usize, asc: bool) {
 // ---------- grouping by date ("Group by date" in the folder's menu): Today, Yesterday, Earlier this week, ... ----------
 
 const DAY: i64 = 864_000_000_000; // FILETIME ticks per day
-const BUCKETS: [&str; 8] = ["Today", "Yesterday", "Earlier this week", "Last week", "Earlier this month", "Last month", "Earlier this year", "A long time ago"];
+/// The date group headings, in the chosen language.
+fn buckets() -> [&'static str; 8] {
+    [
+        t!("Сегодня", "Today", pt: "Hoje"),
+        t!("Вчера", "Yesterday", pt: "Ontem"),
+        t!("Ранее на этой неделе", "Earlier this week", pt: "No início desta semana"),
+        t!("На прошлой неделе", "Last week", pt: "Semana passada"),
+        t!("Ранее в этом месяце", "Earlier this month", pt: "No início deste mês"),
+        t!("В прошлом месяце", "Last month", pt: "Mês passado"),
+        t!("Ранее в этом году", "Earlier this year", pt: "No início deste ano"),
+        t!("Давно", "A long time ago", pt: "Há muito tempo"),
+    ]
+}
 
 thread_local! {
     static BCTX: std::cell::Cell<(i64, i64)> = const { std::cell::Cell::new((0, 0)) }; // (today's local day number, local - UTC in ticks)
@@ -229,7 +241,7 @@ fn add_headers(rows: &mut Vec<Row>) {
         let b = bucket(r.time);
         if b != last {
             last = b;
-            out.push(Row { name: format!("?{}", BUCKETS[b as usize]), dir: false, size: 0, time: 0, icon: -1, thumb: -1, hdr: true });
+            out.push(Row { name: format!("?{}", buckets()[b as usize]), dir: false, size: 0, time: 0, icon: -1, thumb: -1, hdr: true });
         }
         out.push(r);
     }
@@ -238,9 +250,12 @@ fn add_headers(rows: &mut Vec<Row>) {
 
 /// Explorer's "Type" column in short form: "File folder", "TXT file", "File".
 fn type_text(name: &str, dir: bool) -> String {
-    if dir { return "File folder".into(); }
+    if dir { return t!("Папка с файлами", "File folder", pt: "Pasta de arquivos").into(); }
     let file = name.rsplit('\\').next().unwrap_or(name);
-    match file.rsplit_once('.') { Some((stem, e)) if !stem.is_empty() && !e.is_empty() => format!("{} file", e.to_uppercase()), _ => "File".into() }
+    match file.rsplit_once('.') {
+        Some((stem, e)) if !stem.is_empty() && !e.is_empty() => tf!("Файл \"{}\"", "{} file", pt: "Arquivo {}", e.to_uppercase()),
+        _ => t!("Файл", "File", pt: "Arquivo").into(),
+    }
 }
 
 /// Explorer shows file sizes in KB; the bigger ones read better in MB / GB.
@@ -731,13 +746,17 @@ fn search(h: HWND, q: &str) {
     if !indexed {
         // no rust-search installed: look through the current folder and below instead
         let (local, cut, flipped) = local_search(&cur_dir(), q);
-        if flipped { more = format!(" for \u{201C}{}\u{201D}", flip_layout(q)); } // typed in the wrong layout: shown what was meant
+        if flipped { more = tf!(" по запросу \u{201C}{}\u{201D}", " for \u{201C}{}\u{201D}", pt: " para \u{201C}{}\u{201D}", flip_layout(q)); } // typed in the wrong layout: shown what was meant
         rows = local;
-        if cut { more += ", stopped early: narrow the search"; }
+        if cut { more += t!(", поиск остановлен: уточните запрос", ", stopped early: narrow the search", pt: ", parou antes: refine a busca"); }
     }
     let n = rows.len();
-    let where_ = if indexed { "" } else { " in this folder" };
-    let title = if n == 0 { format!("search: {q} - nothing{where_}") } else { format!("search: {q} - {n} hits{where_}{more}") };
+    let where_ = if indexed { "" } else { t!(" в этой папке", " in this folder", pt: " nesta pasta") };
+    let title = if n == 0 {
+        tf!("поиск: {} - ничего{}", "search: {} - nothing{}", pt: "busca: {} - nada{}", q, where_)
+    } else {
+        tf!("поиск: {} - найдено {}{}{}", "search: {} - {} hits{}{}", pt: "busca: {} - {} resultados{}{}", q, n, where_, more)
+    };
     ui::set_search(Some(q.to_string()));
     unsafe { SetWindowTextW(h, w(&title).as_ptr()) };
     let list = ST.with_borrow_mut(|st| { st.rows = rows; st.list });
@@ -1643,7 +1662,10 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                     let _ = TX.set(sh::start_thumbs(h as isize));
                     ST.with_borrow_mut(|st| st.himl = himl as isize);
                     // the same columns, in the same order, as Explorer's details view
-                    col(list, 0, "Name", ui::sc(360), false); col(list, 1, "Date modified", ui::sc(160), false); col(list, 2, "Type", ui::sc(140), false); col(list, 3, "Size", ui::sc(96), true);
+                    col(list, 0, t!("Имя", "Name", pt: "Nome"), ui::sc(360), false);
+                    col(list, 1, t!("Дата изменения", "Date modified", pt: "Data de modificação"), ui::sc(160), false);
+                    col(list, 2, t!("Тип", "Type", pt: "Tipo"), ui::sc(140), false);
+                    col(list, 3, t!("Размер", "Size", pt: "Tamanho"), ui::sc(96), true);
                     ui::style_list(list);
                 }
                 ST.with_borrow_mut(|st| { st.list = list; st.tab = tab; st.edit = edit; st.tabs = vec![PathBuf::new()]; });
@@ -2139,11 +2161,12 @@ mod tests {
 
     #[test]
     fn type_and_size_read_like_explorers() {
-        assert_eq!(type_text("x", true), "File folder");
-        assert_eq!(type_text("a.txt", false), "TXT file");
-        assert_eq!(type_text("C:\\d\\b.tar.gz", false), "GZ file");
-        assert_eq!(type_text(".gitignore", false), "File"); // a dot file has no extension
-        assert_eq!(type_text("Makefile", false), "File");
+        // unit tests always see the Russian texts (lang!())
+        assert_eq!(type_text("x", true), "Папка с файлами");
+        assert_eq!(type_text("a.txt", false), "Файл \"TXT\"");
+        assert_eq!(type_text("C:\\d\\b.tar.gz", false), "Файл \"GZ\"");
+        assert_eq!(type_text(".gitignore", false), "Файл"); // a dot file has no extension
+        assert_eq!(type_text("Makefile", false), "Файл");
         assert_eq!(size_text(1), "1 KB");
         assert_eq!(size_text(2048), "2 KB");
         assert_eq!(size_text(5 << 20), "5.0 MB");
