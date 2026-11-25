@@ -89,6 +89,16 @@ pub(crate) unsafe extern "system" fn kb_hook(n: i32, w: WPARAM, l: LPARAM) -> LR
                 }
                 return 1;
             }
+            // Win+V: without explorer nobody opens the clipboard history; ours does
+            if !EXPLORER_UP.load(Relaxed) && k.vkCode == b'V' as u32 && (held(VK_LWIN) || held(VK_RWIN)) && !held(VK_CONTROL) && !held(VK_MENU) && !held(VK_SHIFT) {
+                if down0 {
+                    WIN_ALONE.store(false, Relaxed);
+                    keybd_event(0xE8, 0, 0, 0); // a key between Win down and up: no Start menu on release
+                    keybd_event(0xE8, 0, KEYEVENTF_KEYUP, 0);
+                    PostMessageW(BAR.load(Relaxed) as HWND, CLIPHIST, 0, 0);
+                }
+                return 1;
+            }
             // Win+R: without explorer nobody opens the Run box
             if !EXPLORER_UP.load(Relaxed) && k.vkCode == b'R' as u32 && (held(VK_LWIN) || held(VK_RWIN)) && !held(VK_CONTROL) && !held(VK_MENU) && !held(VK_SHIFT) {
                 if down0 {

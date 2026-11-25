@@ -20,6 +20,7 @@ extern crate winrust_common;
 use winrust_common as i18n;
 use winrust_common::style::{Style, card, on_accent, pal, rgb, style, ui_face};
 mod clip;
+mod cliphist; // Win+V: the clipboard history without Explorer
 mod fly;
 mod quick;
 mod tray;
@@ -147,6 +148,7 @@ static BAR: AtomicIsize = AtomicIsize::new(0); // the bar window, for the hook t
 const WIN_NUM: u32 = WM_APP + 15; // posted by the keyboard hook: Win+1..9 (wp 0..8) = the n-th button of the bar
 const NEXT_LANG: u32 = WM_APP + 16; // posted by the keyboard hook: Win+Space with no explorer (wp 1 = Shift held: previous layout)
 const VOLKEY: u32 = WM_APP + 14; // posted by the keyboard hook: a volume key (wp 0 up, 1 down, 2 mute)
+const CLIPHIST: u32 = WM_APP + 17; // posted by the keyboard hook: Win+V with no explorer (the clipboard history)
 const SNIP: u32 = WM_APP + 13; // posted by the keyboard hook: PrtSc / Win+Shift+S with no explorer to handle them
 static EXPLORER_UP: AtomicBool = AtomicBool::new(true); // explorer's taskbar exists (it handles PrtSc itself then); refreshed by the bar
 
@@ -519,6 +521,9 @@ unsafe fn show_tip(s: String, cx: i32) {
 thread_local! {
     static SW_MON: Cell<RECT> = const { Cell::new(RECT { left: 0, top: 0, right: 0, bottom: 0 }) }; // the monitor it is shown on
     static SW_CARDS: RefCell<(Vec<RECT>, Vec<isize>)> = const { RefCell::new((Vec::new(), Vec::new())) }; // card rects, DWM previews
+    // where the pointer was when the switcher opened: until it really moves, the card under it is not picked (Windows sends a
+    // WM_MOUSEMOVE to a window that appears under a resting pointer, which used to select that card at once)
+    static SW_PT: Cell<Option<(i32, i32)>> = const { Cell::new(None) };
 }
 
 unsafe fn alt_tab(back: bool) {
@@ -547,6 +552,9 @@ unsafe fn alt_tab(back: bool) {
         }
         SW.set((v, if n == 1 { 0 } else if back { n - 1 } else { 1 }));
         SW_MON.set(mon);
+        let mut pt: POINT = zeroed();
+        GetCursorPos(&mut pt);
+        SW_PT.set(Some((pt.x, pt.y)));
         sw_layout(sw);
     } else {
         SW.with_borrow_mut(|(v, i)| *i = if back { (*i + v.len() - 1) % v.len() } else { (*i + 1) % v.len() });
@@ -616,6 +624,12 @@ unsafe extern "system" fn sw_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         WM_MOUSEACTIVATE => return MA_NOACTIVATE as isize,
         // the pointer picks a card, a click switches to it, a middle click or × closes it, the wheel steps through
         WM_MOUSEMOVE => {
+            let mut p = POINT { x, y };
+            ClientToScreen(hwnd, &mut p);
+            if SW_PT.get() == Some((p.x, p.y)) {
+                return 0; // the pointer has not moved since the switcher opened
+            }
+            SW_PT.set(None);
             if let Some(k) = at() {
                 if SW.with_borrow_mut(|(_, i)| std::mem::replace(i, k)) != k {
                     InvalidateRect(hwnd, null(), 0);
@@ -2691,6 +2705,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         SNIP if wp == 1 => screenshot_notice(hwnd),
         SNIP if wp == 2 => clip_notice(hwnd),
         SNIP => clip::start(),
+        CLIPHIST => cliphist::show(),
         VOLKEY => {
             if wp == 2 { toggle_mute() } else { add_volume(if wp == 0 { 4 } else { -4 }) }
             KillTimer(hwnd, 2);
@@ -2873,6 +2888,7 @@ fn main() {
         let pvc = wide("topbar_preview");
         RegisterClassW(&WNDCLASSW { lpfnWndProc: Some(thumbs::pv_proc), hInstance: hi, hCursor: LoadCursorW(null_mut(), IDC_ARROW), lpszClassName: pvc.as_ptr(), ..zeroed() });
         thumbs::PVWND.set(CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE, pvc.as_ptr(), null(), WS_POPUP, 0, 0, 1, 1, null_mut(), null_mut(), hi, null()));
+        cliphist::init(hi); // listens to the clipboard from now on, for Win+V
         OLD_STATE.set(remember_taskbar_state());
         appbar_new(hwnd);
         // Only when explorer's taskbar is absent: with it running its own registration stays. If it is still up now
