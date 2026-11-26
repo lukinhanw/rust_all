@@ -39,8 +39,19 @@ fn virt() -> (i32, i32, i32, i32) {
 /// The desktop's icon list stays on the primary monitor (at screen 0,0, i.e. -vx, -vy inside the desktop window), between the bar's strips.
 fn place_desk_list(list: HWND) {
     let (vx, vy, ..) = virt();
-    let (sw, sh) = unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) };
-    unsafe { MoveWindow(list, -vx, -vy + desk_top(), sw, (sh - desk_top() - desk_bottom()).max(0), 1) };
+    let sw = unsafe { GetSystemMetrics(SM_CXSCREEN) };
+    unsafe { MoveWindow(list, -vx, -vy + desk_top(), sw, desk_height(), 1) };
+    // another height (the bar changed size, another resolution): the rows are fitted again and the icons laid on them
+    if unsafe { apply_icon_size(list) } { reload(unsafe { GetParent(list) }); }
+}
+/// Height of the desktop's icon list: the primary monitor between the bar's strips.
+fn desk_height() -> i32 { (unsafe { GetSystemMetrics(SM_CYSCREEN) } - desk_top() - desk_bottom()).max(0) }
+/// Icon cell height that fills the desktop down to the bar: as many rows as fit at the nominal height (the last one may be a
+/// quarter short: its label never uses the whole cell), the leftover spread over them. The nominal height left a strip
+/// under the last row where no icon could go.
+fn fit_rows(h: i32, base: i32) -> i32 {
+    let rows = ((h + base / 4) / base.max(1)).max(1);
+    (h / rows).max(1)
 }
 /// Renders the wallpaper for the current monitor layout (at start and when monitors change), freeing the old one.
 fn reload_wall() {
@@ -486,13 +497,16 @@ fn icons_marker() -> PathBuf { PathBuf::from(env::var_os("APPDATA").unwrap_or_de
 fn small_marker() -> PathBuf { icons_marker().with_file_name("small-icons") }
 /// Desktop icon size: the system's large (32 px, default) or small (16 px) icons with a tighter grid. Same icon indexes in both.
 #[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn apply_icon_size(list: HWND) {
+unsafe fn apply_icon_size(list: HWND) -> bool {
     let small = small_marker().exists();
     let mut fi: SHFILEINFOW = std::mem::zeroed();
     let il = SHGetFileInfoW(w("C:\\").as_ptr(), 0, &mut fi, size_of::<SHFILEINFOW>() as u32, SHGFI_SYSICONINDEX | if small { SHGFI_SMALLICON } else { SHGFI_LARGEICON });
     put(list, LVM_SETIMAGELIST, LVSIL_NORMAL as usize, il as isize);
     let (cx, cy) = if small { (76, 64) } else { (88, 96) };
-    put(list, LVM_SETICONSPACING, 0, ((ui::sc(cy) as isize) << 16) | ui::sc(cx) as isize);
+    let cy = fit_rows(desk_height(), ui::sc(cy));
+    let old = put(list, LVM_GETITEMSPACING, 0, 0);
+    put(list, LVM_SETICONSPACING, 0, ((cy as isize) << 16) | ui::sc(cx) as isize);
+    put(list, LVM_GETITEMSPACING, 0, 0) != old // the grid changed: true
 }
 fn icons_hidden() -> bool { icons_marker().exists() }
 fn set_icons_hidden(hide: bool) {
@@ -2218,6 +2232,16 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn desktop_rows_fill_down_to_the_bar() {
+        // 1080 px screen, 34 px bar: the nominal 96 px left a 74 px strip under 10 rows; 11 rows of 94 fill it
+        assert_eq!(super::fit_rows(1034, 96), 94);
+        assert!(1034 - 11 * super::fit_rows(1034, 96) < 11);
+        assert_eq!(super::fit_rows(1034, 64), 64); // small icons: 16 rows already fill it
+        assert_eq!(super::fit_rows(960, 96), 96); // an exact fit stays as it is
+        assert_eq!(super::fit_rows(50, 96), 50); // tiny screen: one row
+    }
+
     #[test]
     fn typing_a_name_finds_the_row_not_the_first_one() {
         let rows = [None, Some("Apps"), Some("Documentos"), Some("docs.txt"), None, Some("Música"), Some("zip")];
