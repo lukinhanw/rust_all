@@ -27,6 +27,8 @@ pub(crate) unsafe fn run_box() {
     PostMessageW(h, WM_HOTKEY, 2, 0); // id 2: Run mode (1 is its Alt+Space)
 }
 
+static WIN_D_HELD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Win key on its own opens our Start. Runs on its own thread so a busy bar can never stall the system keyboard.
 pub(crate) unsafe extern "system" fn kb_hook(n: i32, w: WPARAM, l: LPARAM) -> LRESULT {
     if n >= 0 {
@@ -98,6 +100,25 @@ pub(crate) unsafe extern "system" fn kb_hook(n: i32, w: WPARAM, l: LPARAM) -> LR
                     PostMessageW(BAR.load(Relaxed) as HWND, CLIPHIST, 0, 0);
                 }
                 return 1;
+            }
+            // Win+D: show the desktop / bring the windows back. Here, not only in reshell: reshell runs without admin, and
+            // Windows keeps keys from it while an elevated window has the focus, nor lets it minimize that window.
+            if k.vkCode == b'D' as u32 && (held(VK_LWIN) || held(VK_RWIN)) && !held(VK_CONTROL) && !held(VK_MENU) && !held(VK_SHIFT) {
+                if down0 {
+                    // auto-repeat while held must not minimize and restore again and again
+                    if !WIN_D_HELD.swap(true, Relaxed) {
+                        WIN_ALONE.store(false, Relaxed);
+                        keybd_event(0xE8, 0, 0, 0); // a key between Win down and up: no Start menu on release
+                        keybd_event(0xE8, 0, KEYEVENTF_KEYUP, 0);
+                        std::thread::spawn(winrust_common::desktop::toggle); // a hung window must not stall the keyboard
+                    }
+                } else {
+                    WIN_D_HELD.store(false, Relaxed);
+                }
+                return 1;
+            }
+            if k.vkCode == b'D' as u32 && !down0 {
+                WIN_D_HELD.store(false, Relaxed); // Win let go first
             }
             // Win+R: without explorer nobody opens the Run box
             if !EXPLORER_UP.load(Relaxed) && k.vkCode == b'R' as u32 && (held(VK_LWIN) || held(VK_RWIN)) && !held(VK_CONTROL) && !held(VK_MENU) && !held(VK_SHIFT) {

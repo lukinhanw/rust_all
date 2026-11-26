@@ -29,8 +29,12 @@ unsafe extern "system" fn collect(h: HWND, lp: LPARAM) -> BOOL {
     unsafe {
         let mut cloaked = 0u32; // DWMWA_CLOAKED: UWP ghosts that are "visible" but not on screen
         DwmGetWindowAttribute(h, 14, &mut cloaked as *mut _ as _, 4);
-        let tool = GetWindowLongW(h, GWL_EXSTYLE) as u32 & WS_EX_TOOLWINDOW != 0; // topbar, desktop, tray hosts
-        if IsWindowVisible(h) != 0 && IsIconic(h) == 0 && !tool && cloaked == 0 && GetWindow(h, GW_OWNER).is_null() && GetWindowTextLengthW(h) > 0 && !is_desktop(h) {
+        let ex = GetWindowLongW(h, GWL_EXSTYLE) as u32;
+        let tool = ex & WS_EX_TOOLWINDOW != 0; // topbar, desktop, tray hosts
+        // an untitled window that asks for a taskbar button (WS_EX_APPWINDOW, e.g. DeusOT) is an app window too: left
+        // up, a maximized one kept covering the desktop
+        let titled = GetWindowTextLengthW(h) > 0 || ex & WS_EX_APPWINDOW != 0;
+        if IsWindowVisible(h) != 0 && IsIconic(h) == 0 && !tool && cloaked == 0 && GetWindow(h, GW_OWNER).is_null() && titled && !is_desktop(h) {
             (*(lp as *mut Vec<isize>)).push(h as isize);
         }
         1
