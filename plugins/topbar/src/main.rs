@@ -531,15 +531,6 @@ unsafe fn show_tip(s: String, cx: i32) {
 thread_local! {
     static SW_MON: Cell<RECT> = const { Cell::new(RECT { left: 0, top: 0, right: 0, bottom: 0 }) }; // the monitor it is shown on
     static SW_CARDS: RefCell<(Vec<RECT>, Vec<isize>)> = const { RefCell::new((Vec::new(), Vec::new())) }; // card rects, DWM previews
-    // where the pointer was when the switcher opened: a window appearing under a still pointer gets a WM_MOUSEMOVE,
-    // which must not pick the card under it (#183, #116); None once the pointer really moved
-    static SW_PT: Cell<Option<(i32, i32)>> = const { Cell::new(None) };
-}
-
-unsafe fn cursor() -> (i32, i32) {
-    let mut p: POINT = zeroed();
-    GetCursorPos(&mut p);
-    (p.x, p.y)
 }
 
 unsafe fn alt_tab(back: bool) {
@@ -568,7 +559,6 @@ unsafe fn alt_tab(back: bool) {
         }
         SW.set((v, if n == 1 { 0 } else if back { n - 1 } else { 1 }));
         SW_MON.set(mon);
-        SW_PT.set(Some(cursor()));
         sw_layout(sw);
     } else {
         SW.with_borrow_mut(|(v, i)| *i = if back { (*i + v.len() - 1) % v.len() } else { (*i + 1) % v.len() });
@@ -636,18 +626,8 @@ unsafe extern "system" fn sw_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
     match msg {
         WM_PAINT => SW.with_borrow(|(v, sel)| SW_CARDS.with_borrow(|(r, ids)| thumbs::paint(hwnd, v, r, ids, Some(*sel), false))),
         WM_MOUSEACTIVATE => return MA_NOACTIVATE as isize,
-        // the pointer picks a card, a click switches to it, a middle click or × closes it, the wheel steps through
-        WM_MOUSEMOVE => {
-            if SW_PT.get().is_some_and(|p| p == cursor()) {
-                return 0;
-            }
-            SW_PT.set(None);
-            if let Some(k) = at() {
-                if SW.with_borrow_mut(|(_, i)| std::mem::replace(i, k)) != k {
-                    InvalidateRect(hwnd, null(), 0);
-                }
-            }
-        }
+        // only a click picks: the pointer resting on or passing over a card never changes the selection. A click switches
+        // to its window, a middle click or × closes it, the wheel steps through
         WM_LBUTTONUP | WM_MBUTTONUP => {
             let Some(k) = at() else { return 0 };
             SW.with_borrow_mut(|(_, i)| *i = k);
