@@ -1,8 +1,8 @@
 //! Code shared by the WinRust programs: the language switch (`t!`, `tf!`, `lang!`, `en!`), the NTFS MFT reader, Win+D.
 //! Use it with `#[macro_use] extern crate winrust_common;` at the crate root.
 //!
-//! English by default; Russian, Japanese or Portuguese (Brazil) when %ProgramData%\WinRust\lang.txt contains "ru", "ja" or "pt"
-//! (the installer's language button writes it).
+//! English by default; Russian, Japanese, Portuguese (Brazil) or Simplified Chinese when %ProgramData%\WinRust\lang.txt
+//! contains "ru", "ja", "pt" or "zh" (the language list in the installer and in rust-settings writes it).
 //! Programs read the file once at start; the one that flips the switch updates its own texts at once.
 use std::{
     path::PathBuf,
@@ -13,13 +13,29 @@ pub mod desktop;
 pub mod dpi;
 pub mod fg;
 pub mod journal;
+pub mod launch;
 pub mod mem;
 pub mod mft;
 pub mod proc;
 pub mod reg;
+pub mod search;
 pub mod settings;
 pub mod style;
 pub mod wallpaper;
+
+/// Console programs print the UI language, and Rust writes UTF-8: a console decodes those bytes with its output code page,
+/// which is 936 on a Chinese Windows, so every non-ASCII line would come out as noise. Switch this window's output code
+/// page to UTF-8. A pipe or a file is left alone: another program reads those bytes as UTF-8 anyway (rtaskmgr reads rs-du).
+pub fn utf8_console() {
+    use windows_sys::Win32::System::Console::{GetConsoleMode, GetStdHandle, SetConsoleOutputCP, STD_OUTPUT_HANDLE};
+    unsafe {
+        let h = GetStdHandle(STD_OUTPUT_HANDLE);
+        let mut mode = 0u32;
+        if !h.is_null() && h != windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE && GetConsoleMode(h, &mut mode) != 0 {
+            SetConsoleOutputCP(65001);
+        }
+    }
+}
 
 /// "Show in folder": opens `path`'s folder with the file selected in the installed rust-explorer, else in Windows Explorer.
 pub fn reveal(path: &str) {
@@ -38,6 +54,7 @@ pub enum Lang {
     Ru,
     Ja,
     Pt,
+    Zh,
 }
 
 impl Lang {
@@ -48,6 +65,7 @@ impl Lang {
             Lang::Ru => "Русский",
             Lang::Ja => "日本語",
             Lang::Pt => "Português",
+            Lang::Zh => "简体中文",
         }
     }
     /// The language after this one: the switch button goes round them.
@@ -56,18 +74,21 @@ impl Lang {
             Lang::En => Lang::Ru,
             Lang::Ru => Lang::Ja,
             Lang::Ja => Lang::Pt,
-            Lang::Pt => Lang::En,
+            Lang::Pt => Lang::Zh,
+            Lang::Zh => Lang::En,
         }
     }
     fn code(self) -> &'static str {
-        ["en", "ru", "ja", "pt"][self as usize]
+        ["en", "ru", "ja", "pt", "zh"][self as usize]
     }
-    fn parse(s: &str) -> Lang {
+    /// The language of a code or a lang.txt line (`en`, `ru`, `ja`, `pt`, `zh`; `zh-CN` and `zh_CN` work too).
+    pub fn parse(s: &str) -> Lang {
         let s = s.trim().to_ascii_lowercase();
         match s.get(..2) {
             Some("ru") => Lang::Ru,
             Some("ja") => Lang::Ja,
             Some("pt") => Lang::Pt,
+            Some("zh") => Lang::Zh,
             _ => Lang::En,
         }
     }
@@ -86,6 +107,7 @@ pub fn lang() -> Lang {
         1 => Lang::Ru,
         2 => Lang::Ja,
         3 => Lang::Pt,
+        4 => Lang::Zh,
         _ => {
             let l = file().and_then(|f| std::fs::read_to_string(f).ok()).map_or(Lang::En, |s| Lang::parse(&s));
             LANG.store(l as u8, Relaxed);
@@ -95,11 +117,16 @@ pub fn lang() -> Lang {
 }
 
 /// Switches this process and writes the choice for the other programs (they pick it up when they start).
-pub fn set_lang(l: Lang) {
+/// False: the file could not be written (an unelevated installer, a user without rights on %ProgramData%), so the
+/// other programs keep their language; the caller can say so instead of promising a restart that changes nothing.
+pub fn set_lang(l: Lang) -> bool {
     LANG.store(l as u8, Relaxed);
-    if let Some(f) = file() {
-        let _ = std::fs::create_dir_all(f.parent().unwrap());
-        let _ = std::fs::write(f, l.code());
+    match file() {
+        Some(f) => {
+            let _ = std::fs::create_dir_all(f.parent().unwrap());
+            std::fs::write(&f, l.code()).is_ok()
+        }
+        None => false,
     }
 }
 
@@ -119,24 +146,41 @@ macro_rules! en {
     };
 }
 
-/// `dot!()`: true where the decimal separator is a dot (English, Japanese); Russian and Portuguese use a comma.
+/// `dot!()`: true where the decimal separator is a dot (English, Japanese, Chinese); Russian and Portuguese use a comma.
 #[macro_export]
 macro_rules! dot {
     () => {
-        matches!($crate::lang!(), $crate::Lang::En | $crate::Lang::Ja)
+        matches!($crate::lang!(), $crate::Lang::En | $crate::Lang::Ja | $crate::Lang::Zh)
     };
 }
 
-/// `t!("русский", "english", ja: "日本語", pt: "português")`: a text in the current language.
-/// Without `ja:`/`pt:` Japanese and Portuguese show the English text; `t!(ru, en, pt: ..)` has Portuguese only.
+/// `t!("русский", "english", ja: "日本語", pt: "português", zh: "中文")`: a text in the current language.
+/// Without `ja:`/`pt:`/`zh:` those languages show the English text.
 #[macro_export]
 macro_rules! t {
+    ($ru:expr, $en:expr, ja: $ja:expr, pt: $pt:expr, zh: $zh:expr $(,)?) => {
+        match $crate::lang!() {
+            $crate::Lang::Ru => $ru,
+            $crate::Lang::En => $en,
+            $crate::Lang::Ja => $ja,
+            $crate::Lang::Pt => $pt,
+            $crate::Lang::Zh => $zh,
+        }
+    };
     ($ru:expr, $en:expr, ja: $ja:expr, pt: $pt:expr $(,)?) => {
         match $crate::lang!() {
             $crate::Lang::Ru => $ru,
             $crate::Lang::En => $en,
             $crate::Lang::Ja => $ja,
             $crate::Lang::Pt => $pt,
+            $crate::Lang::Zh => $en,
+        }
+    };
+    ($ru:expr, $en:expr, zh: $zh:expr $(,)?) => {
+        match $crate::lang!() {
+            $crate::Lang::Ru => $ru,
+            $crate::Lang::Zh => $zh,
+            _ => $en,
         }
     };
     ($ru:expr, $en:expr, pt: $pt:expr $(,)?) => {
@@ -151,16 +195,33 @@ macro_rules! t {
     };
 }
 
-/// `tf!("русский {}", "english {}", ja: "日本語 {}", pt: "português {}", args...)`: format! in the current language
-/// (all templates are checked at compile time). Without `ja:`/`pt:` they use the English one; `pt:` alone is allowed too.
+/// `tf!("русский {}", "english {}", ja: "日本語 {}", pt: "português {}", zh: "中文 {}", args...)`: format! in the current
+/// language (all templates are checked at compile time). Without `ja:`/`pt:`/`zh:` those languages use the English one.
 #[macro_export]
 macro_rules! tf {
+    ($ru:literal, $en:literal, ja: $ja:literal, pt: $pt:literal, zh: $zh:literal $(, $a:expr)* $(,)?) => {
+        match $crate::lang!() {
+            $crate::Lang::Ru => format!($ru $(, $a)*),
+            $crate::Lang::En => format!($en $(, $a)*),
+            $crate::Lang::Ja => format!($ja $(, $a)*),
+            $crate::Lang::Pt => format!($pt $(, $a)*),
+            $crate::Lang::Zh => format!($zh $(, $a)*),
+        }
+    };
     ($ru:literal, $en:literal, ja: $ja:literal, pt: $pt:literal $(, $a:expr)* $(,)?) => {
         match $crate::lang!() {
             $crate::Lang::Ru => format!($ru $(, $a)*),
             $crate::Lang::En => format!($en $(, $a)*),
             $crate::Lang::Ja => format!($ja $(, $a)*),
             $crate::Lang::Pt => format!($pt $(, $a)*),
+            $crate::Lang::Zh => format!($en $(, $a)*),
+        }
+    };
+    ($ru:literal, $en:literal, zh: $zh:literal $(, $a:expr)* $(,)?) => {
+        match $crate::lang!() {
+            $crate::Lang::Ru => format!($ru $(, $a)*),
+            $crate::Lang::Zh => format!($zh $(, $a)*),
+            _ => format!($en $(, $a)*),
         }
     };
     ($ru:literal, $en:literal, pt: $pt:literal $(, $a:expr)* $(,)?) => {
@@ -181,17 +242,20 @@ mod tests {
     fn tests_run_in_russian() {
         assert_eq!(t!("да", "yes"), "да");
         assert_eq!(tf!("{} шт", "{} pcs", 3), "3 шт");
-        assert_eq!(t!("да", "yes", ja: "はい", pt: "sim"), "да");
-        assert_eq!(tf!("{} шт", "{} pcs", ja: "{} 個", pt: "{} un.", 3), "3 шт");
+        assert_eq!(t!("да", "yes", ja: "はい", pt: "sim", zh: "是"), "да");
+        assert_eq!(tf!("{} шт", "{} pcs", ja: "{} 個", pt: "{} un.", zh: "{} 个", 3), "3 шт");
     }
 
     #[test]
     fn lang_codes() {
         use super::Lang;
         assert_eq!(Lang::parse(" pt-BR "), Lang::Pt);
+        assert_eq!(Lang::parse("ZH-cn"), Lang::Zh);
+        assert_eq!(Lang::parse("zh_Hans"), Lang::Zh);
+        assert_eq!(Lang::Zh.next(), Lang::En);
         assert_eq!(Lang::parse("JA"), Lang::Ja);
         assert_eq!(Lang::parse("ru"), Lang::Ru);
         assert_eq!(Lang::parse("x"), Lang::En);
-        assert_eq!(Lang::Pt.next(), Lang::En);
+        assert_eq!(Lang::Pt.next(), Lang::Zh);
     }
 }

@@ -120,13 +120,23 @@ pub(crate) unsafe extern "system" fn kb_hook(n: i32, w: WPARAM, l: LPARAM) -> LR
             if k.vkCode == b'D' as u32 && !down0 {
                 WIN_D_HELD.store(false, Relaxed); // Win let go first
             }
-            // Win+R: without explorer nobody opens the Run box
-            if !EXPLORER_UP.load(Relaxed) && k.vkCode == b'R' as u32 && (held(VK_LWIN) || held(VK_RWIN)) && !held(VK_CONTROL) && !held(VK_MENU) && !held(VK_SHIFT) {
+            // Win+R: always our Run box, also while Explorer runs (lent to Settings, or not replaced): its own box is the plain one
+            if k.vkCode == b'R' as u32 && (held(VK_LWIN) || held(VK_RWIN)) && !held(VK_CONTROL) && !held(VK_MENU) && !held(VK_SHIFT) {
                 if down0 {
                     WIN_ALONE.store(false, Relaxed);
                     keybd_event(0xE8, 0, 0, 0); // a key between Win down and up: no Start menu on release
                     keybd_event(0xE8, 0, KEYEVENTF_KEYUP, 0);
                     run_box();
+                }
+                return 1;
+            }
+            // Win+X: our power-user menu (the one Start's right click opens); Explorer's needs its own taskbar, which is hidden
+            if k.vkCode == b'X' as u32 && (held(VK_LWIN) || held(VK_RWIN)) && !held(VK_CONTROL) && !held(VK_MENU) && !held(VK_SHIFT) {
+                if down0 {
+                    WIN_ALONE.store(false, Relaxed);
+                    keybd_event(0xE8, 0, 0, 0); // a key between Win down and up: no Start menu on release
+                    keybd_event(0xE8, 0, KEYEVENTF_KEYUP, 0);
+                    PostMessageW(BAR.load(Relaxed) as HWND, WIN_X, 0, 0);
                 }
                 return 1;
             }
@@ -174,8 +184,16 @@ pub(crate) unsafe extern "system" fn kb_hook(n: i32, w: WPARAM, l: LPARAM) -> LR
                 if down {
                     WIN_ALONE.store(true, Relaxed);
                 } else if WIN_ALONE.swap(false, Relaxed) {
-                    keys(&[0xE8]); // an unassigned key between press and release: Windows no longer opens its own Start
+                    // A lone Win *release* is what opens Windows' own Start. An E8 sent from here used to be queued behind
+                    // the release already being dispatched, so the shell sometimes saw no other key in time and opened its
+                    // Start on top of ours. Swallow the real release and hand the shell an E8 and then a synthetic Win-up:
+                    // it sees a key between down and up (so no Start), and the synthetic up still clears the Win key for
+                    // everything else (our own hook skips it: injected). A Win+key chord never reaches here: the key down
+                    // clears WIN_ALONE before the release.
+                    keys(&[0xE8]);
+                    key_up(k.vkCode as u16);
                     PostMessageW(BAR.load(Relaxed) as HWND, WIN_START, 0, 0);
+                    return 1;
                 }
             } else if down {
                 WIN_ALONE.store(false, Relaxed); // Win+something else: a shortcut, not a Start press

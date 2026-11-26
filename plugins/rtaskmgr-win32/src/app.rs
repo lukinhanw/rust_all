@@ -162,14 +162,14 @@ fn wide(s: &str) -> Vec<u16> {
 
 fn page_buttons(p: Page) -> Vec<(Btn, &'static str, char)> {
     match p {
-        Page::Processes => vec![(Btn::RunTask, t!("Запустить новую задачу", "Run new task", ja: "新しいタスクの実行", pt: "Executar nova tarefa"), '\u{E710}'), (Btn::EndTask, t!("Снять задачу", "End task", ja: "タスクの終了", pt: "Finalizar tarefa"), '\u{E711}'), (Btn::Efficiency, t!("Режим эффективности", "Efficiency mode", ja: "効率モード", pt: "Modo de eficiência"), '\u{E945}'), (Btn::More, "", '\u{E712}')],
-        Page::Users => vec![(Btn::EndTask, t!("Снять задачу", "End task", ja: "タスクの終了", pt: "Finalizar tarefa"), '\u{E711}'), (Btn::More, "", '\u{E712}')],
-        Page::Details => vec![(Btn::RunTask, t!("Запустить новую задачу", "Run new task", ja: "新しいタスクの実行", pt: "Executar nova tarefa"), '\u{E710}'), (Btn::EndTask, t!("Снять задачу", "End task", ja: "タスクの終了", pt: "Finalizar tarefa"), '\u{E711}'), (Btn::More, "", '\u{E712}')],
-        Page::Services => vec![(Btn::SvcStart, t!("Запустить", "Start", ja: "開始", pt: "Iniciar"), '\u{E768}'), (Btn::SvcStop, t!("Остановить", "Stop", ja: "停止", pt: "Parar"), '\u{E71A}'), (Btn::More, "", '\u{E712}')],
-        Page::Startup => vec![(Btn::StartEnable, t!("Включить", "Enable", ja: "有効にする", pt: "Ativar"), '\u{E73E}'), (Btn::StartDisable, t!("Отключить", "Disable", ja: "無効にする", pt: "Desativar"), '\u{E711}'), (Btn::More, "", '\u{E712}')],
-        Page::Rules => vec![(Btn::RuleDelete, t!("Удалить правило", "Delete rule", ja: "ルールを削除", pt: "Excluir regra"), '\u{E74D}'), (Btn::More, "", '\u{E712}')],
+        Page::Processes => vec![(Btn::RunTask, t!("Запустить новую задачу", "Run new task", ja: "新しいタスクの実行", pt: "Executar nova tarefa", zh: "运行新任务"), '\u{E710}'), (Btn::EndTask, t!("Снять задачу", "End task", ja: "タスクの終了", pt: "Finalizar tarefa", zh: "结束任务"), '\u{E711}'), (Btn::Efficiency, t!("Режим эффективности", "Efficiency mode", ja: "効率モード", pt: "Modo de eficiência", zh: "能效模式"), '\u{E945}'), (Btn::More, "", '\u{E712}')],
+        Page::Users => vec![(Btn::EndTask, t!("Снять задачу", "End task", ja: "タスクの終了", pt: "Finalizar tarefa", zh: "结束任务"), '\u{E711}'), (Btn::More, "", '\u{E712}')],
+        Page::Details => vec![(Btn::RunTask, t!("Запустить новую задачу", "Run new task", ja: "新しいタスクの実行", pt: "Executar nova tarefa", zh: "运行新任务"), '\u{E710}'), (Btn::EndTask, t!("Снять задачу", "End task", ja: "タスクの終了", pt: "Finalizar tarefa", zh: "结束任务"), '\u{E711}'), (Btn::More, "", '\u{E712}')],
+        Page::Services => vec![(Btn::SvcStart, t!("Запустить", "Start", ja: "開始", pt: "Iniciar", zh: "启动"), '\u{E768}'), (Btn::SvcStop, t!("Остановить", "Stop", ja: "停止", pt: "Parar", zh: "停止"), '\u{E71A}'), (Btn::More, "", '\u{E712}')],
+        Page::Startup => vec![(Btn::StartEnable, t!("Включить", "Enable", ja: "有効にする", pt: "Ativar", zh: "启用"), '\u{E73E}'), (Btn::StartDisable, t!("Отключить", "Disable", ja: "無効にする", pt: "Desativar", zh: "禁用"), '\u{E711}'), (Btn::More, "", '\u{E712}')],
+        Page::Rules => vec![(Btn::RuleDelete, t!("Удалить правило", "Delete rule", ja: "ルールを削除", pt: "Excluir regra", zh: "删除规则"), '\u{E74D}'), (Btn::More, "", '\u{E712}')],
         Page::History => vec![(Btn::More, "", '\u{E712}')],
-        Page::Boost => vec![(Btn::BoostOn, t!("Включить", "Enable", ja: "有効にする", pt: "Ativar"), '\u{E73E}'), (Btn::BoostOff, t!("Выключить", "Disable", ja: "無効にする", pt: "Desativar"), '\u{E711}')],
+        Page::Boost => vec![(Btn::BoostOn, t!("Включить", "Enable", ja: "有効にする", pt: "Ativar", zh: "启用"), '\u{E73E}'), (Btn::BoostOff, t!("Выключить", "Disable", ja: "無効にする", pt: "Desativar", zh: "禁用"), '\u{E711}')],
         _ => vec![],
     }
 }
@@ -695,8 +695,14 @@ impl App {
     }
 
     /// Из таймера: Windows-таймер может тикать чаще заданного, поэтому режем частоту.
+    /// Hidden in the tray or minimized: nothing is drawn, so a look every 5 s (rules, history, notices) is enough.
+    fn hidden(&self) -> bool {
+        self.win.handle.hwnd().is_none_or(|h| unsafe { IsWindowVisible(h) == 0 || IsIconic(h) != 0 })
+    }
+
     pub fn on_timer(&self) {
-        if self.last_tick.get().elapsed() >= Duration::from_millis(900) {
+        let every = if self.hidden() { 4900 } else { 900 };
+        if self.last_tick.get().elapsed() >= Duration::from_millis(every) {
             self.last_tick.set(Instant::now());
             self.tick();
         }
@@ -712,7 +718,10 @@ impl App {
         if !notes.is_empty() {
             let msg = notes.join("; ");
             self.toast(&msg);
-            self.tray.show(&msg, Some(t!("Диспетчер задач", "Task Manager", ja: "タスク マネージャー", pt: "Gerenciador de Tarefas")), None, None);
+            self.tray.show(&msg, Some(t!("Диспетчер задач", "Task Manager", ja: "タスク マネージャー", pt: "Gerenciador de Tarefas", zh: "任务管理器")), None, None);
+        }
+        if self.hidden() {
+            return; // the table, the page lists and the repaint wait until the window is shown
         }
         {
             let (page, ticks) = (self.ui.borrow().page, self.data.borrow().ticks);
@@ -805,31 +814,31 @@ impl App {
                 let mut v = vec![];
                 if let Some(r) = self.selected_row()
                     && r.expandable {
-                        v.push(MI::Item(if r.expanded { t!("Свернуть", "Collapse", ja: "折りたたむ", pt: "Recolher") } else { t!("Развернуть", "Expand", ja: "展開", pt: "Expandir") }, Act::Toggle));
+                        v.push(MI::Item(if r.expanded { t!("Свернуть", "Collapse", ja: "折りたたむ", pt: "Recolher", zh: "折叠") } else { t!("Развернуть", "Expand", ja: "展開", pt: "Expandir", zh: "展开") }, Act::Toggle));
                         v.push(MI::Sep);
                     }
                 v.extend([
-                    MI::Item(t!("Снять задачу", "End task", ja: "タスクの終了", pt: "Finalizar tarefa"), Act::EndTask),
-                    MI::Item(t!("Завершить дерево процессов", "End process tree", ja: "プロセス ツリーの終了", pt: "Finalizar árvore de processos"), Act::EndTree),
-                    MI::Item(t!("Режим эффективности", "Efficiency mode", ja: "効率モード", pt: "Modo de eficiência"), Act::Efficiency),
-                    MI::Item(t!("Приостановить", "Suspend", ja: "中断", pt: "Suspender"), Act::Suspend(true)),
-                    MI::Item(t!("Возобновить", "Resume", ja: "再開", pt: "Retomar"), Act::Suspend(false)),
+                    MI::Item(t!("Снять задачу", "End task", ja: "タスクの終了", pt: "Finalizar tarefa", zh: "结束任务"), Act::EndTask),
+                    MI::Item(t!("Завершить дерево процессов", "End process tree", ja: "プロセス ツリーの終了", pt: "Finalizar árvore de processos", zh: "结束进程树"), Act::EndTree),
+                    MI::Item(t!("Режим эффективности", "Efficiency mode", ja: "効率モード", pt: "Modo de eficiência", zh: "能效模式"), Act::Efficiency),
+                    MI::Item(t!("Приостановить", "Suspend", ja: "中断", pt: "Suspender", zh: "挂起"), Act::Suspend(true)),
+                    MI::Item(t!("Возобновить", "Resume", ja: "再開", pt: "Retomar", zh: "继续"), Act::Suspend(false)),
                     MI::Sep,
-                    MI::Sub(t!("Приоритет", "Priority", ja: "優先度", pt: "Prioridade"), sys::PRIORITIES.iter().map(|p| MI::Item(p.0, Act::Prio(p.1))).collect()),
-                    MI::Sub(t!("Ядра процессора", "CPU cores", ja: "CPU コア", pt: "Núcleos da CPU"), vec![MI::Item(t!("Все ядра", "All cores", ja: "すべてのコア", pt: "Todos os núcleos"), Act::Affinity(false)), MI::Item(t!("Только половина ядер", "Half of the cores only", ja: "コアの半分のみ", pt: "Apenas metade dos núcleos"), Act::Affinity(true))]),
+                    MI::Sub(t!("Приоритет", "Priority", ja: "優先度", pt: "Prioridade", zh: "优先级"), sys::PRIORITIES.iter().map(|p| MI::Item(p.0, Act::Prio(p.1))).collect()),
+                    MI::Sub(t!("Ядра процессора", "CPU cores", ja: "CPU コア", pt: "Núcleos da CPU", zh: "CPU 核心"), vec![MI::Item(t!("Все ядра", "All cores", ja: "すべてのコア", pt: "Todos os núcleos", zh: "所有核心"), Act::Affinity(false)), MI::Item(t!("Только половина ядер", "Half of the cores only", ja: "コアの半分のみ", pt: "Apenas metade dos núcleos", zh: "仅一半核心"), Act::Affinity(true))]),
                     MI::Sep,
-                    MI::Item(t!("Открыть расположение файла", "Open file location", ja: "ファイルの場所を開く", pt: "Abrir local do arquivo"), Act::OpenDir),
-                    MI::Item(t!("Копировать командную строку", "Copy command line", ja: "コマンド ラインをコピー", pt: "Copiar linha de comando"), Act::CopyCmd),
+                    MI::Item(t!("Открыть расположение файла", "Open file location", ja: "ファイルの場所を開く", pt: "Abrir local do arquivo", zh: "打开文件所在位置"), Act::OpenDir),
+                    MI::Item(t!("Копировать командную строку", "Copy command line", ja: "コマンド ラインをコピー", pt: "Copiar linha de comando", zh: "复制命令行"), Act::CopyCmd),
                     MI::Sep,
-                    MI::Item(t!("Правило: понижать приоритет при ЦП > 25% дольше 60 с", "Rule: lower priority when CPU > 25% for over 60 s", ja: "ルール: CPU が 60 秒を超えて 25% を超えたら優先度を下げる", pt: "Regra: reduzir a prioridade quando a CPU > 25% por mais de 60 s"), Act::RuleLower),
-                    MI::Item(t!("Правило: уведомлять при ЦП > 25% дольше 60 с", "Rule: notify when CPU > 25% for over 60 s", ja: "ルール: CPU が 60 秒を超えて 25% を超えたら通知する", pt: "Regra: avisar quando a CPU > 25% por mais de 60 s"), Act::RuleNotify),
+                    MI::Item(t!("Правило: понижать приоритет при ЦП > 25% дольше 60 с", "Rule: lower priority when CPU > 25% for over 60 s", ja: "ルール: CPU が 60 秒を超えて 25% を超えたら優先度を下げる", pt: "Regra: reduzir a prioridade quando a CPU > 25% por mais de 60 s", zh: "规则：CPU 超过 25% 持续 60 秒以上时降低优先级"), Act::RuleLower),
+                    MI::Item(t!("Правило: уведомлять при ЦП > 25% дольше 60 с", "Rule: notify when CPU > 25% for over 60 s", ja: "ルール: CPU が 60 秒を超えて 25% を超えたら通知する", pt: "Regra: avisar quando a CPU > 25% por mais de 60 s", zh: "规则：CPU 超过 25% 持续 60 秒以上时通知"), Act::RuleNotify),
                 ]);
                 v
             }
-            Page::Services => vec![MI::Item(t!("Запустить службу", "Start service", ja: "サービスを開始", pt: "Iniciar serviço"), Act::SvcStart), MI::Item(t!("Остановить службу", "Stop service", ja: "サービスを停止", pt: "Parar serviço"), Act::SvcStop)],
-            Page::Startup => vec![MI::Item(t!("Включить", "Enable", ja: "有効にする", pt: "Ativar"), Act::StartEnable), MI::Item(t!("Отключить", "Disable", ja: "無効にする", pt: "Desativar"), Act::StartDisable), MI::Sep, MI::Item(t!("Открыть расположение файла", "Open file location", ja: "ファイルの場所を開く", pt: "Abrir local do arquivo"), Act::OpenDir)],
-            Page::Rules => vec![MI::Item(t!("Удалить правило", "Delete rule", ja: "ルールを削除", pt: "Excluir regra"), Act::RuleDelete)],
-            Page::Boost => vec![MI::Item(t!("Включить", "Enable", ja: "有効にする", pt: "Ativar"), Act::BoostOn), MI::Item(t!("Выключить", "Disable", ja: "無効にする", pt: "Desativar"), Act::BoostOff)],
+            Page::Services => vec![MI::Item(t!("Запустить службу", "Start service", ja: "サービスを開始", pt: "Iniciar serviço", zh: "启动服务"), Act::SvcStart), MI::Item(t!("Остановить службу", "Stop service", ja: "サービスを停止", pt: "Parar serviço", zh: "停止服务"), Act::SvcStop)],
+            Page::Startup => vec![MI::Item(t!("Включить", "Enable", ja: "有効にする", pt: "Ativar", zh: "启用"), Act::StartEnable), MI::Item(t!("Отключить", "Disable", ja: "無効にする", pt: "Desativar", zh: "禁用"), Act::StartDisable), MI::Sep, MI::Item(t!("Открыть расположение файла", "Open file location", ja: "ファイルの場所を開く", pt: "Abrir local do arquivo", zh: "打开文件所在位置"), Act::OpenDir)],
+            Page::Rules => vec![MI::Item(t!("Удалить правило", "Delete rule", ja: "ルールを削除", pt: "Excluir regra", zh: "删除规则"), Act::RuleDelete)],
+            Page::Boost => vec![MI::Item(t!("Включить", "Enable", ja: "有効にする", pt: "Ativar", zh: "启用"), Act::BoostOn), MI::Item(t!("Выключить", "Disable", ja: "無効にする", pt: "Desativar", zh: "禁用"), Act::BoostOff)],
             _ => vec![],
         }
     }
@@ -837,30 +846,30 @@ impl App {
     fn more_menu(&self) -> Vec<MI> {
         let d = self.data.borrow();
         vec![
-            MI::Item(t!("Запустить новую задачу", "Run new task", ja: "新しいタスクの実行", pt: "Executar nova tarefa"), Act::RunTask),
-            MI::Item(t!("Экспорт в CSV", "Export to CSV", ja: "CSV にエクスポート", pt: "Exportar para CSV"), Act::Export),
+            MI::Item(t!("Запустить новую задачу", "Run new task", ja: "新しいタスクの実行", pt: "Executar nova tarefa", zh: "运行新任务"), Act::RunTask),
+            MI::Item(t!("Экспорт в CSV", "Export to CSV", ja: "CSV にエクスポート", pt: "Exportar para CSV", zh: "导出为 CSV"), Act::Export),
             MI::Sep,
-            MI::Sub(t!("Тема", "Theme", ja: "テーマ", pt: "Tema"), vec![MI::Check(t!("Светлая", "Light", ja: "ライト", pt: "Claro"), Act::SetTheme(0), d.cfg.theme == 0), MI::Check(t!("Тёмная", "Dark", ja: "ダーク", pt: "Escuro"), Act::SetTheme(1), d.cfg.theme == 1), MI::Check(t!("Системная", "System", ja: "システム", pt: "Sistema"), Act::SetTheme(2), d.cfg.theme == 2)]),
-            MI::Item(t!("Параметры", "Settings", ja: "設定", pt: "Configurações"), Act::Go(Page::Settings)),
+            MI::Sub(t!("Тема", "Theme", ja: "テーマ", pt: "Tema", zh: "主题"), vec![MI::Check(t!("Светлая", "Light", ja: "ライト", pt: "Claro", zh: "浅色"), Act::SetTheme(0), d.cfg.theme == 0), MI::Check(t!("Тёмная", "Dark", ja: "ダーク", pt: "Escuro", zh: "深色"), Act::SetTheme(1), d.cfg.theme == 1), MI::Check(t!("Системная", "System", ja: "システム", pt: "Sistema", zh: "系统"), Act::SetTheme(2), d.cfg.theme == 2)]),
+            MI::Item(t!("Параметры", "Settings", ja: "設定", pt: "Configurações", zh: "设置"), Act::Go(Page::Settings)),
         ]
         .into_iter()
-        .chain((!d.is_admin).then_some([MI::Sep, MI::Item(t!("Перезапустить от имени администратора", "Restart as administrator", ja: "管理者として再起動", pt: "Reiniciar como administrador"), Act::RelaunchAdmin)]).into_iter().flatten())
+        .chain((!d.is_admin).then_some([MI::Sep, MI::Item(t!("Перезапустить от имени администратора", "Restart as administrator", ja: "管理者として再起動", pt: "Reiniciar como administrador", zh: "以管理员身份重启"), Act::RelaunchAdmin)]).into_iter().flatten())
         .collect()
     }
 
     pub fn tray_menu(&self) -> Vec<MI> {
         let d = self.data.borrow();
         vec![
-            MI::Item(t!("Показать окно", "Show window", ja: "ウィンドウを表示", pt: "Mostrar janela"), Act::ShowWindow),
+            MI::Item(t!("Показать окно", "Show window", ja: "ウィンドウを表示", pt: "Mostrar janela", zh: "显示窗口"), Act::ShowWindow),
             MI::Sep,
-            MI::Check(t!("Закрытие окна сворачивает в трей", "Closing the window minimizes to tray", ja: "ウィンドウを閉じるとトレイに最小化", pt: "Fechar a janela minimiza para a bandeja"), Act::ToggleTray, d.cfg.to_tray),
-            MI::Check(t!("Запускать при входе в Windows", "Start with Windows", ja: "Windows と同時に起動", pt: "Iniciar com o Windows"), Act::ToggleAutostart, startup::self_autostart()),
-            MI::Check(t!("Сеть по процессам (ETW, администратор)", "Per-process network (ETW, administrator)", ja: "プロセスごとのネットワーク (ETW、管理者)", pt: "Rede por processo (ETW, administrador)"), Act::ToggleEtw, d.etw.is_some()),
+            MI::Check(t!("Закрытие окна сворачивает в трей", "Closing the window minimizes to tray", ja: "ウィンドウを閉じるとトレイに最小化", pt: "Fechar a janela minimiza para a bandeja", zh: "关闭窗口时最小化到托盘"), Act::ToggleTray, d.cfg.to_tray),
+            MI::Check(t!("Запускать при входе в Windows", "Start with Windows", ja: "Windows と同時に起動", pt: "Iniciar com o Windows", zh: "随 Windows 启动"), Act::ToggleAutostart, startup::self_autostart()),
+            MI::Check(t!("Сеть по процессам (ETW, администратор)", "Per-process network (ETW, administrator)", ja: "プロセスごとのネットワーク (ETW、管理者)", pt: "Rede por processo (ETW, administrador)", zh: "按进程统计网络（ETW，管理员）"), Act::ToggleEtw, d.etw.is_some()),
             MI::Sep,
         ]
         .into_iter()
-        .chain((!d.is_admin).then_some(MI::Item(t!("Перезапустить от имени администратора", "Restart as administrator", ja: "管理者として再起動", pt: "Reiniciar como administrador"), Act::RelaunchAdmin)))
-        .chain([MI::Item(t!("Выход", "Exit", ja: "終了", pt: "Sair"), Act::Exit)])
+        .chain((!d.is_admin).then_some(MI::Item(t!("Перезапустить от имени администратора", "Restart as administrator", ja: "管理者として再起動", pt: "Reiniciar como administrador", zh: "以管理员身份重启"), Act::RelaunchAdmin)))
+        .chain([MI::Item(t!("Выход", "Exit", ja: "終了", pt: "Sair", zh: "退出"), Act::Exit)])
         .collect()
     }
 
@@ -889,7 +898,7 @@ impl App {
                 if sys::relaunch_as_admin("") {
                     return self.quit();
                 }
-                return self.toast(t!("Запуск от имени администратора отменён", "Running as administrator was cancelled", ja: "管理者としての実行がキャンセルされました", pt: "A execução como administrador foi cancelada"));
+                return self.toast(t!("Запуск от имени администратора отменён", "Running as administrator was cancelled", ja: "管理者としての実行がキャンセルされました", pt: "A execução como administrador foi cancelada", zh: "已取消以管理员身份运行"));
             }
             Act::Go(p) => return self.go_page(p),
             Act::RunTask => {
@@ -907,9 +916,10 @@ impl App {
                 let on = {
                     let mut d = self.data.borrow_mut();
                     d.cfg.to_tray = !d.cfg.to_tray;
+                    d.cfg.tray_asked = true;
                     d.cfg.to_tray
                 };
-                self.toast(if on { t!("Закрытие окна будет сворачивать в трей", "Closing the window will minimize to tray", ja: "ウィンドウを閉じるとトレイに最小化されます", pt: "Fechar a janela vai minimizar para a bandeja") } else { t!("Закрытие окна завершит программу", "Closing the window will quit the program", ja: "ウィンドウを閉じるとプログラムが終了します", pt: "Fechar a janela vai encerrar o programa") });
+                self.toast(if on { t!("Закрытие окна будет сворачивать в трей", "Closing the window will minimize to tray", ja: "ウィンドウを閉じるとトレイに最小化されます", pt: "Fechar a janela vai minimizar para a bandeja", zh: "关闭窗口将最小化到托盘") } else { t!("Закрытие окна завершит программу", "Closing the window will quit the program", ja: "ウィンドウを閉じるとプログラムが終了します", pt: "Fechar a janela vai encerrar o programa", zh: "关闭窗口将退出程序") });
                 self.save_settings();
                 return;
             }
@@ -918,9 +928,9 @@ impl App {
                 let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default();
                 let ok = startup::set_self_autostart(want, &exe);
                 self.toast(match (ok, startup::self_autostart()) {
-                    (true, true) => t!("Программа будет запускаться при входе в Windows (сразу в трей)", "The program will start with Windows (straight to the tray)", ja: "プログラムは Windows と同時に起動します (トレイに直接)", pt: "O programa vai iniciar com o Windows (direto na bandeja)"),
-                    (true, false) => t!("Автозапуск программы отключён", "Autostart is disabled", ja: "自動起動は無効です", pt: "A inicialização automática está desativada"),
-                    _ => t!("Не удалось изменить автозапуск", "Could not change autostart", ja: "自動起動を変更できませんでした", pt: "Não foi possível alterar a inicialização automática"),
+                    (true, true) => t!("Программа будет запускаться при входе в Windows (сразу в трей)", "The program will start with Windows (straight to the tray)", ja: "プログラムは Windows と同時に起動します (トレイに直接)", pt: "O programa vai iniciar com o Windows (direto na bandeja)", zh: "程序将随 Windows 启动（直接进托盘）"),
+                    (true, false) => t!("Автозапуск программы отключён", "Autostart is disabled", ja: "自動起動は無効です", pt: "A inicialização automática está desativada", zh: "已禁用自动启动"),
+                    _ => t!("Не удалось изменить автозапуск", "Could not change autostart", ja: "自動起動を変更できませんでした", pt: "Não foi possível alterar a inicialização automática", zh: "无法更改自动启动"),
                 });
                 return;
             }
@@ -928,16 +938,16 @@ impl App {
                 let msg = {
                     let mut d = self.data.borrow_mut();
                     if !d.is_admin {
-                        t!("Сеть по процессам требует прав администратора — запустите программу от имени администратора", "Per-process network needs administrator rights - run the program as administrator", ja: "プロセスごとのネットワークには管理者権限が必要です。管理者として実行してください", pt: "A rede por processo exige direitos de administrador - execute o programa como administrador").to_string()
+                        t!("Сеть по процессам требует прав администратора — запустите программу от имени администратора", "Per-process network needs administrator rights - run the program as administrator", ja: "プロセスごとのネットワークには管理者権限が必要です。管理者として実行してください", pt: "A rede por processo exige direitos de administrador - execute o programa como administrador", zh: "按进程统计网络需要管理员权限——请以管理员身份运行程序").to_string()
                     } else if let Some(s) = d.etw.take() {
                         crate::net::stop(s);
                         d.net.clear();
                         d.cfg.etw = false;
-                        t!("Сеть по процессам выключена", "Per-process network is off", ja: "プロセスごとのネットワークはオフです", pt: "A rede por processo está desligada").into()
+                        t!("Сеть по процессам выключена", "Per-process network is off", ja: "プロセスごとのネットワークはオフです", pt: "A rede por processo está desligada", zh: "按进程统计网络已关闭").into()
                     } else {
                         d.etw = crate::net::start();
                         d.cfg.etw = d.etw.is_some();
-                        if d.etw.is_some() { t!("Сеть по процессам включена (колонка «Сеть»)", "Per-process network is on ('Network' column)", ja: "プロセスごとのネットワークはオンです (「ネットワーク」列)", pt: "A rede por processo está ligada (coluna 'Rede')").into() } else { t!("Не удалось запустить ETW", "Could not start ETW", ja: "ETW を開始できませんでした", pt: "Não foi possível iniciar o ETW").into() }
+                        if d.etw.is_some() { t!("Сеть по процессам включена (колонка «Сеть»)", "Per-process network is on ('Network' column)", ja: "プロセスごとのネットワークはオンです (「ネットワーク」列)", pt: "A rede por processo está ligada (coluna 'Rede')", zh: "按进程统计网络已开启（「网络」列）").into() } else { t!("Не удалось запустить ETW", "Could not start ETW", ja: "ETW を開始できませんでした", pt: "Não foi possível iniciar o ETW", zh: "无法启动 ETW").into() }
                     }
                 };
                 self.toast(&msg);
@@ -950,7 +960,7 @@ impl App {
                     d.cfg.gpu_temp_always = !d.cfg.gpu_temp_always;
                     d.cfg.gpu_temp_always
                 };
-                self.toast(if on { t!("Температура GPU читается постоянно", "GPU temperature is read continuously", ja: "GPU 温度を常時読み取ります", pt: "A temperatura da GPU é lida continuamente") } else { t!("Температура GPU читается только на странице GPU", "GPU temperature is read only on the GPU page", ja: "GPU 温度は GPU ページでのみ読み取ります", pt: "A temperatura da GPU é lida só na página da GPU") });
+                self.toast(if on { t!("Температура GPU читается постоянно", "GPU temperature is read continuously", ja: "GPU 温度を常時読み取ります", pt: "A temperatura da GPU é lida continuamente", zh: "正在持续读取 GPU 温度") } else { t!("Температура GPU читается только на странице GPU", "GPU temperature is read only on the GPU page", ja: "GPU 温度は GPU ページでのみ読み取ります", pt: "A temperatura da GPU é lida só na página da GPU", zh: "仅在 GPU 页面读取 GPU 温度") });
                 self.save_settings();
                 return;
             }
@@ -959,7 +969,7 @@ impl App {
         }
         let page = self.ui.borrow().page;
         let Some(row) = self.selected_row() else {
-            self.toast(t!("Сначала выберите строку в списке", "Select a row in the list first", ja: "先にリストで行を選択してください", pt: "Selecione primeiro uma linha na lista"));
+            self.toast(t!("Сначала выберите строку в списке", "Select a row in the list first", ja: "先にリストで行を選択してください", pt: "Selecione primeiro uma linha na lista", zh: "请先在列表中选择一行"));
             return;
         };
         if act == Act::Toggle {
@@ -978,7 +988,7 @@ impl App {
                         }
                     }
                     self.save_settings();
-                    self.toast(t!("Правило удалено", "Rule deleted", ja: "ルールを削除しました", pt: "Regra excluída"));
+                    self.toast(t!("Правило удалено", "Rule deleted", ja: "ルールを削除しました", pt: "Regra excluída", zh: "已删除规则"));
                     self.rebuild();
                 }
                 return;
@@ -999,24 +1009,24 @@ impl App {
             pids.retain(|&p| d.sys.process(sysinfo::Pid::from_u32(p)).is_none_or(|x| !CRITICAL.contains(&x.name().to_string_lossy().to_lowercase().as_str())));
             if pids.len() < total {
                 drop(d);
-                self.toast(t!("Критичные системные процессы (csrss, lsass, smss и т.п.) защищены и пропущены", "Critical system processes (csrss, lsass, smss, etc.) are protected and skipped", ja: "重要なシステム プロセス (csrss、lsass、smss など) は保護されているためスキップされます", pt: "Processos críticos do sistema (csrss, lsass, smss etc.) são protegidos e ignorados"));
+                self.toast(t!("Критичные системные процессы (csrss, lsass, smss и т.п.) защищены и пропущены", "Critical system processes (csrss, lsass, smss, etc.) are protected and skipped", ja: "重要なシステム プロセス (csrss、lsass、smss など) は保護されているためスキップされます", pt: "Processos críticos do sistema (csrss, lsass, smss etc.) são protegidos e ignorados", zh: "关键系统进程（csrss、lsass、smss 等）受保护，将被跳过"));
                 if pids.is_empty() {
                     return;
                 }
             }
         }
-        if (act == Act::EndTask && pids.len() > 1 || act == Act::EndTree) && !self.confirm(&tf!("Завершить процессов: {} (для дерева — вместе с потомками)?", "End {} processes (for a tree, together with their children)?", ja: "{} 個のプロセスを終了しますか (ツリーの場合は子プロセスも含む)?", pt: "Finalizar {} processos (no caso de árvore, junto com os filhos)?", pids.len())) {
+        if (act == Act::EndTask && pids.len() > 1 || act == Act::EndTree) && !self.confirm(&tf!("Завершить процессов: {} (для дерева — вместе с потомками)?", "End {} processes (for a tree, together with their children)?", ja: "{} 個のプロセスを終了しますか (ツリーの場合は子プロセスも含む)?", pt: "Finalizar {} processos (no caso de árvore, junto com os filhos)?", zh: "结束 {} 个进程（若是进程树，将连同子进程一起结束）？", pids.len())) {
             return;
         }
         let report = |what: &str, ok: usize| {
-            self.toast(&if ok == pids.len() { tf!("{what}: готово ({ok})", "{what}: done ({ok})", ja: "{what}: 完了 ({ok})", pt: "{what}: concluído ({ok})") } else { tf!("{what}: удалось {ok} из {} — для остальных нужны права администратора{}", "{what}: {ok} of {} succeeded - the rest need administrator rights{}", ja: "{what}: {} 件中 {ok} 件が成功しました。残りは管理者権限が必要です{}", pt: "{what}: {ok} de {} concluídos - o restante exige direitos de administrador{}", pids.len(), if self.data.borrow().is_admin { "" } else { t!(" (меню «…» → «Перезапустить от имени администратора»)", " (menu '…' → 'Restart as administrator')", ja: " (メニュー「…」→「管理者として再起動」)", pt: " (menu '…' → 'Reiniciar como administrador')") }) });
+            self.toast(&if ok == pids.len() { tf!("{what}: готово ({ok})", "{what}: done ({ok})", ja: "{what}: 完了 ({ok})", pt: "{what}: concluído ({ok})", zh: "{what}：完成（{ok}）") } else { tf!("{what}: удалось {ok} из {} — для остальных нужны права администратора{}", "{what}: {ok} of {} succeeded - the rest need administrator rights{}", ja: "{what}: {} 件中 {ok} 件が成功しました。残りは管理者権限が必要です{}", pt: "{what}: {ok} de {} concluídos - o restante exige direitos de administrador{}", zh: "{what}：{ok} 个成功，共 {} 个——其余需要管理员权限{}", pids.len(), if self.data.borrow().is_admin { "" } else { t!(" (меню «…» → «Перезапустить от имени администратора»)", " (menu '…' → 'Restart as administrator')", ja: " (メニュー「…」→「管理者として再起動」)", pt: " (menu '…' → 'Reiniciar como administrador')", zh: " （菜单「…」→「以管理员身份重启」）") }) });
         };
         match act {
             Act::EndTask => {
                 let d = self.data.borrow();
                 let ok = pids.iter().filter(|&&p| d.sys.process(sysinfo::Pid::from_u32(p)).is_some_and(|x| x.kill())).count();
                 drop(d);
-                report(t!("Завершение", "Ending", ja: "終了中", pt: "Finalizando"), ok);
+                report(t!("Завершение", "Ending", ja: "終了中", pt: "Finalizando", zh: "正在结束"), ok);
             }
             Act::EndTree => {
                 let d = self.data.borrow();
@@ -1024,9 +1034,9 @@ impl App {
                 let all = descendants(&parents, &pids);
                 let ok = all.iter().filter(|&&p| d.sys.process(sysinfo::Pid::from_u32(p)).is_some_and(|x| x.kill())).count();
                 drop(d);
-                self.toast(&tf!("Завершено {ok} из {} (с потомками)", "Ended {ok} of {} (with children)", ja: "{} 件中 {ok} 件を終了しました (子プロセス含む)", pt: "Finalizados {ok} de {} (com os filhos)", all.len()));
+                self.toast(&tf!("Завершено {ok} из {} (с потомками)", "Ended {ok} of {} (with children)", ja: "{} 件中 {ok} 件を終了しました (子プロセス含む)", pt: "Finalizados {ok} de {} (com os filhos)", zh: "已结束 {ok} 个，共 {} 个（含子进程）", all.len()));
             }
-            Act::Prio(c) => report(t!("Приоритет", "Priority", ja: "優先度", pt: "Prioridade"), pids.iter().filter(|&&p| sys::set_priority(p, c)).count()),
+            Act::Prio(c) => report(t!("Приоритет", "Priority", ja: "優先度", pt: "Prioridade", zh: "优先级"), pids.iter().filter(|&&p| sys::set_priority(p, c)).count()),
             Act::Suspend(on) => {
                 let ok: Vec<u32> = pids.iter().copied().filter(|&p| sys::suspend(p, on)).collect();
                 {
@@ -1035,7 +1045,7 @@ impl App {
                         if on { d.suspended.insert(*p) } else { d.suspended.remove(p) };
                     }
                 }
-                report(if on { t!("Приостановка", "Suspending", ja: "中断中", pt: "Suspendendo") } else { t!("Возобновление", "Resuming", ja: "再開中", pt: "Retomando") }, ok.len());
+                report(if on { t!("Приостановка", "Suspending", ja: "中断中", pt: "Suspendendo", zh: "正在挂起") } else { t!("Возобновление", "Resuming", ja: "再開中", pt: "Retomando", zh: "正在继续") }, ok.len());
             }
             Act::Efficiency => {
                 let on = !pids.iter().all(|p| self.data.borrow().efficiency.contains(p));
@@ -1046,16 +1056,16 @@ impl App {
                         if on { d.efficiency.insert(*p) } else { d.efficiency.remove(p) };
                     }
                 }
-                report(if on { t!("Режим эффективности включён", "Efficiency mode on", ja: "効率モードをオンにしました", pt: "Modo de eficiência ligado") } else { t!("Режим эффективности выключен", "Efficiency mode off", ja: "効率モードをオフにしました", pt: "Modo de eficiência desligado") }, ok.len());
+                report(if on { t!("Режим эффективности включён", "Efficiency mode on", ja: "効率モードをオンにしました", pt: "Modo de eficiência ligado", zh: "能效模式已开启") } else { t!("Режим эффективности выключен", "Efficiency mode off", ja: "効率モードをオフにしました", pt: "Modo de eficiência desligado", zh: "能效模式已关闭") }, ok.len());
             }
-            Act::Affinity(half) => report(t!("Привязка к ядрам", "Core affinity", ja: "コア アフィニティ", pt: "Afinidade de núcleos"), pids.iter().filter(|&&p| sys::set_affinity(p, half)).count()),
+            Act::Affinity(half) => report(t!("Привязка к ядрам", "Core affinity", ja: "コア アフィニティ", pt: "Afinidade de núcleos", zh: "CPU 相关性"), pids.iter().filter(|&&p| sys::set_affinity(p, half)).count()),
             Act::OpenDir => {
                 let d = self.data.borrow();
                 let path = pids.iter().find_map(|&p| d.procs.iter().find(|x| x.pid == p).and_then(|x| x.exe.clone()));
                 drop(d);
                 match path {
                     Some(p) => winrust_common::reveal(&p.replace("\\..\\", "\\")),
-                    None => self.toast(t!("Путь к файлу недоступен (системный или защищённый процесс)", "File path unavailable (system or protected process)", ja: "ファイルのパスを取得できません (システムまたは保護されたプロセス)", pt: "Caminho do arquivo indisponível (processo do sistema ou protegido)")),
+                    None => self.toast(t!("Путь к файлу недоступен (системный или защищённый процесс)", "File path unavailable (system or protected process)", ja: "ファイルのパスを取得できません (システムまたは保護されたプロセス)", pt: "Caminho do arquivo indisponível (processo do sistema ou protegido)", zh: "无法获取文件路径（系统进程或受保护进程）")),
                 }
             }
             Act::CopyCmd => {
@@ -1063,10 +1073,10 @@ impl App {
                 let cmd = process_cmd(&d, pids[0]);
                 drop(d);
                 if cmd.is_empty() {
-                    self.toast(t!("Командная строка недоступна для этого процесса", "Command line unavailable for this process", ja: "このプロセスのコマンド ラインを取得できません", pt: "Linha de comando indisponível para este processo"));
+                    self.toast(t!("Командная строка недоступна для этого процесса", "Command line unavailable for this process", ja: "このプロセスのコマンド ラインを取得できません", pt: "Linha de comando indisponível para este processo", zh: "此进程无法获取命令行"));
                 } else {
                     nwg::Clipboard::set_data_text(&self.win, &cmd);
-                    self.toast(t!("Командная строка скопирована", "Command line copied", ja: "コマンド ラインをコピーしました", pt: "Linha de comando copiada"));
+                    self.toast(t!("Командная строка скопирована", "Command line copied", ja: "コマンド ラインをコピーしました", pt: "Linha de comando copiada", zh: "已复制命令行"));
                 }
             }
             Act::RuleLower | Act::RuleNotify => {
@@ -1079,10 +1089,10 @@ impl App {
                 let msg = {
                     let mut d = self.data.borrow_mut();
                     if d.rules.iter().any(|r| r.proc == name && r.act == act) {
-                        t!("Такое правило уже есть (страница «Правила»)", "This rule already exists ('Rules' page)", ja: "このルールはすでに存在します (「ルール」ページ)", pt: "Esta regra já existe (página 'Regras')").to_string()
+                        t!("Такое правило уже есть (страница «Правила»)", "This rule already exists ('Rules' page)", ja: "このルールはすでに存在します (「ルール」ページ)", pt: "Esta regra já existe (página 'Regras')", zh: "该规则已存在（「规则」页面）").to_string()
                     } else {
                         d.rules.push(store::Rule { proc: name.clone(), cpu: 25.0, secs: 60, act, hits: 0 });
-                        tf!("Правило добавлено: «{name}» — ЦП > 25% дольше 60 с", "Rule added: '{name}' - CPU > 25% for over 60 s", ja: "ルールを追加しました: '{name}' - CPU が 60 秒を超えて 25% 超", pt: "Regra adicionada: '{name}' - CPU > 25% por mais de 60 s")
+                        tf!("Правило добавлено: «{name}» — ЦП > 25% дольше 60 с", "Rule added: '{name}' - CPU > 25% for over 60 s", ja: "ルールを追加しました: '{name}' - CPU が 60 秒を超えて 25% 超", pt: "Regra adicionada: '{name}' - CPU > 25% por mais de 60 s", zh: "已添加规则：「{name}」——CPU 超过 25% 持续 60 秒以上")
                     }
                 };
                 self.save_settings();
@@ -1100,9 +1110,9 @@ impl App {
         };
         let n = row.aux.clone();
         self.toast(&match sys::service_ctl(&n, start) {
-            Ok(()) => tf!("Служба {n}: команда отправлена", "Service {n}: command sent", ja: "サービス {n}: コマンドを送信しました", pt: "Serviço {n}: comando enviado"),
-            Err(5) => tf!("Служба {n}: отказано в доступе — запустите от администратора", "Service {n}: access denied - run as administrator", ja: "サービス {n}: アクセスが拒否されました。管理者として実行してください", pt: "Serviço {n}: acesso negado - execute como administrador"),
-            Err(e) => tf!("Служба {n}: ошибка Win32 {e}", "Service {n}: Win32 error {e}", ja: "サービス {n}: Win32 エラー {e}", pt: "Serviço {n}: erro Win32 {e}"),
+            Ok(()) => tf!("Служба {n}: команда отправлена", "Service {n}: command sent", ja: "サービス {n}: コマンドを送信しました", pt: "Serviço {n}: comando enviado", zh: "服务 {n}：命令已发送"),
+            Err(5) => tf!("Служба {n}: отказано в доступе — запустите от администратора", "Service {n}: access denied - run as administrator", ja: "サービス {n}: アクセスが拒否されました。管理者として実行してください", pt: "Serviço {n}: acesso negado - execute como administrador", zh: "服务 {n}：拒绝访问——请以管理员身份运行"),
+            Err(e) => tf!("Служба {n}: ошибка Win32 {e}", "Service {n}: Win32 error {e}", ja: "サービス {n}: Win32 エラー {e}", pt: "Serviço {n}: erro Win32 {e}", zh: "服务 {n}：Win32 错误 {e}"),
         });
     }
 
@@ -1120,9 +1130,9 @@ impl App {
             let d = self.data.borrow();
             match d.startup.iter().find(|s| s.key() == row.key) {
                 Some(it) => match startup::set_enabled(it, on) {
-                    Ok(()) => format!("«{}»: {}", it.name, if on { t!("включено", "enabled", ja: "有効", pt: "ativado") } else { t!("отключено — не будет запускаться при входе в Windows", "disabled - will not start with Windows", ja: "無効 - Windows と同時に起動しません", pt: "desativado - não vai iniciar com o Windows") }),
-                    Err(5) => tf!("«{}»: нужны права администратора", "'{}': administrator rights needed", ja: "'{}': 管理者権限が必要です", pt: "'{}': direitos de administrador necessários", it.name),
-                    Err(e) => tf!("«{}»: ошибка Win32 {e}", "'{}': Win32 error {e}", ja: "'{}': Win32 エラー {e}", pt: "'{}': erro Win32 {e}", it.name),
+                    Ok(()) => format!("«{}»: {}", it.name, if on { t!("включено", "enabled", ja: "有効", pt: "ativado", zh: "已启用") } else { t!("отключено — не будет запускаться при входе в Windows", "disabled - will not start with Windows", ja: "無効 - Windows と同時に起動しません", pt: "desativado - não vai iniciar com o Windows", zh: "已禁用——不会随 Windows 启动") }),
+                    Err(5) => tf!("«{}»: нужны права администратора", "'{}': administrator rights needed", ja: "'{}': 管理者権限が必要です", pt: "'{}': direitos de administrador necessários", zh: "「{}」：需要管理员权限", it.name),
+                    Err(e) => tf!("«{}»: ошибка Win32 {e}", "'{}': Win32 error {e}", ja: "'{}': Win32 エラー {e}", pt: "'{}': erro Win32 {e}", zh: "「{}」：Win32 错误 {e}", it.name),
                 },
                 None => return,
             }
@@ -1139,20 +1149,20 @@ impl App {
             _ => return,
         };
         let Some(id) = crate::boost::Id::from_key(&row.key) else { return };
-        if on && id == crate::boost::Id::Defender && !self.confirm(t!("Defender перестанет проверять кэши сборки и библиотеки игр (cargo, npm, pip, Steam, Epic…). Вредоносный файл в этих папках не будет найден при открытии. Включить?", "Defender will stop scanning build caches and game libraries (cargo, npm, pip, Steam, Epic…). A malicious file in those folders will not be caught when opened. Enable?", ja: "Defender はビルド キャッシュとゲーム ライブラリ (cargo、npm、pip、Steam、Epic…) のスキャンを停止します。これらのフォルダー内の悪意のあるファイルは、開いても検出されません。有効にしますか?", pt: "O Defender vai deixar de verificar caches de compilação e bibliotecas de jogos (cargo, npm, pip, Steam, Epic…). Um arquivo malicioso nessas pastas não será detectado ao ser aberto. Ativar?")) {
+        if on && id == crate::boost::Id::Defender && !self.confirm(t!("Defender перестанет проверять кэши сборки и библиотеки игр (cargo, npm, pip, Steam, Epic…). Вредоносный файл в этих папках не будет найден при открытии. Включить?", "Defender will stop scanning build caches and game libraries (cargo, npm, pip, Steam, Epic…). A malicious file in those folders will not be caught when opened. Enable?", ja: "Defender はビルド キャッシュとゲーム ライブラリ (cargo、npm、pip、Steam、Epic…) のスキャンを停止します。これらのフォルダー内の悪意のあるファイルは、開いても検出されません。有効にしますか?", pt: "O Defender vai deixar de verificar caches de compilação e bibliotecas de jogos (cargo, npm, pip, Steam, Epic…). Um arquivo malicioso nessas pastas não será detectado ao ser aberto. Ativar?", zh: "Defender 将不再扫描编译缓存和游戏库（cargo、npm、pip、Steam、Epic…）。这些文件夹中的恶意文件在被打开时不会被拦截。要启用吗？")) {
             return;
         }
         // донор токена для программ, которые профиль запустит обратно: sihost.exe работает в каждом сеансе без повышения
         let donors: Vec<u32> = self.data.borrow().procs.iter().filter(|p| p.name.eq_ignore_ascii_case("sihost.exe")).map(|p| p.pid).collect();
         match crate::boost::start(id, on, donors) {
-            Ok(()) => self.toast(&tf!("{}: выполняется…", "{}: running…", ja: "{}: 実行中…", pt: "{}: executando…", id.title())),
+            Ok(()) => self.toast(&tf!("{}: выполняется…", "{}: running…", ja: "{}: 実行中…", pt: "{}: executando…", zh: "{}：正在运行…", id.title())),
             Err(e) => self.toast(&format!("{}: {e}", id.title())),
         }
         self.rebuild();
     }
 
     fn confirm(&self, text: &str) -> bool {
-        let p = nwg::MessageParams { title: t!("Подтверждение", "Confirmation", ja: "確認", pt: "Confirmação"), content: text, buttons: nwg::MessageButtons::YesNo, icons: nwg::MessageIcons::Warning };
+        let p = nwg::MessageParams { title: t!("Подтверждение", "Confirmation", ja: "確認", pt: "Confirmação", zh: "确认"), content: text, buttons: nwg::MessageButtons::YesNo, icons: nwg::MessageIcons::Warning };
         nwg::modal_message(&self.win, &p) == nwg::MessageChoice::Yes
     }
 
@@ -1160,7 +1170,7 @@ impl App {
         let ui = self.ui.borrow();
         if !ui.has_table() {
             drop(ui);
-            return self.toast(t!("На этой странице нечего экспортировать", "Nothing to export on this page", ja: "このページにはエクスポートするものがありません", pt: "Nada para exportar nesta página"));
+            return self.toast(t!("На этой странице нечего экспортировать", "Nothing to export on this page", ja: "このページにはエクスポートするものがありません", pt: "Nada para exportar nesta página", zh: "此页面没有可导出的内容"));
         }
         let esc = |s: &str| format!("\"{}\"", s.replace('"', "\"\""));
         let mut out = String::from("\u{feff}");
@@ -1174,8 +1184,8 @@ impl App {
         let path = dir.join(format!("rtaskmgr-{}-{y:04}{mo:02}{d:02}-{h:02}{mi:02}{s:02}.csv", page_title(ui.page)));
         drop(ui);
         match std::fs::write(&path, out) {
-            Ok(()) => self.toast(&tf!("Сохранено: {}", "Saved: {}", ja: "保存しました: {}", pt: "Salvo: {}", path.display())),
-            Err(e) => self.toast(&tf!("Не удалось сохранить CSV: {e}", "Could not save CSV: {e}", ja: "CSV を保存できませんでした: {e}", pt: "Não foi possível salvar o CSV: {e}")),
+            Ok(()) => self.toast(&tf!("Сохранено: {}", "Saved: {}", ja: "保存しました: {}", pt: "Salvo: {}", zh: "已保存：{}", path.display())),
+            Err(e) => self.toast(&tf!("Не удалось сохранить CSV: {e}", "Could not save CSV: {e}", ja: "CSV を保存できませんでした: {e}", pt: "Não foi possível salvar o CSV: {e}", zh: "无法保存 CSV：{e}")),
         }
     }
 
@@ -1232,6 +1242,34 @@ impl App {
                 SetForegroundWindow(h);
             }
         }
+        // up to 5 s old from the tray: fresh numbers right away
+        self.last_tick.set(Instant::now());
+        self.tick();
+    }
+
+    /// The first close: keep running in the tray, or quit? `None` = cancelled, the window stays.
+    pub fn ask_tray(&self) -> Option<bool> {
+        let text = t!(
+            "Оставить диспетчер задач работать в трее при закрытии окна?\n\nВ трее он продолжает собирать историю и применять правила. Изменить это можно в настройках или в меню значка в трее.",
+            "Keep Task Manager running in the tray when you close the window?\n\nIn the tray it keeps collecting history and applying rules. You can change this later in Settings or in the tray icon's menu.",
+            ja: "ウィンドウを閉じたときにタスク マネージャーをトレイで動作させたままにしますか?\n\nトレイでは履歴の収集とルールの適用を続けます。この設定は後で [設定] またはトレイ アイコンのメニューで変更できます。",
+            pt: "Manter o Gerenciador de Tarefas em execução na bandeja ao fechar a janela?\n\nNa bandeja ele continua coletando o histórico e aplicando as regras. Você pode mudar isso depois em Configurações ou no menu do ícone da bandeja.",
+            zh: "关闭窗口时让任务管理器继续在托盘中运行吗？\n\n在托盘中它会继续收集历史记录并执行规则。以后可以在设置或托盘图标的菜单中更改。"
+        );
+        let title = t!("Диспетчер задач", "Task Manager", ja: "タスク マネージャー", pt: "Gerenciador de Tarefas", zh: "任务管理器");
+        let w = |s: &str| s.encode_utf16().chain([0]).collect::<Vec<u16>>();
+        let h = self.win.handle.hwnd().unwrap_or(std::ptr::null_mut());
+        let to_tray = match unsafe { MessageBoxW(h, w(text).as_ptr(), w(title).as_ptr(), MB_YESNOCANCEL | MB_ICONQUESTION) } {
+            IDYES => true,
+            IDNO => false,
+            _ => return None,
+        };
+        {
+            let mut d = self.data.borrow_mut();
+            d.cfg.to_tray = to_tray;
+            d.cfg.tray_asked = true;
+        }
+        Some(to_tray)
     }
 
     pub fn quit(&self) {

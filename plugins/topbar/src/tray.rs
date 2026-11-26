@@ -26,6 +26,12 @@ pub(crate) fn hide_onedrive() -> bool {
     std::env::current_exe().ok().and_then(|e| std::fs::read_to_string(e.with_file_name("topbar.cfg")).ok()).is_none_or(|c| !c.contains("hide_onedrive=0"))
 }
 
+/// Explorer's volume, network and power icons ({7820AE73/74/75-23E3-4229-82C1-E41CB67D5B9C}): the bar draws those itself.
+/// Its other icons (printer queue, Safely Remove Hardware, microphone in use) stay (#127).
+fn own_icon(guid: &[u8; 16]) -> bool {
+    matches!(guid[0], 0x73..=0x75) && guid[1..] == [0xAE, 0x20, 0x78, 0xE3, 0x23, 0x29, 0x42, 0x82, 0xC1, 0xE4, 0x1C, 0xB6, 0x7D, 0x5B, 0x9C]
+}
+
 /// WM_COPYDATA (dwData 1) from Shell_NotifyIcon: u32 magic, u32 NIM_*, then the platform-neutral NOTIFYICONDATA
 /// (32-bit handles): hWnd@12 uID@16 uFlags@20 callback@24 hIcon@28 dwState@288 mask@292 version@808 guid@944.
 pub(crate) unsafe fn tray_msg(d: &[u8]) {
@@ -47,7 +53,7 @@ pub(crate) unsafe fn tray_msg(d: &[u8]) {
                     None => {
                         let exe = exe_of(h);
                         let n = exe.rsplit('\\').next().unwrap_or("");
-                        if n == "explorer.exe" || n == "topbar.exe" || (n == "onedrive.exe" && hide_onedrive()) {
+                        if (n == "explorer.exe" && own_icon(&guid)) || n == "topbar.exe" || (n == "onedrive.exe" && hide_onedrive()) {
                             return; // the system's own icons are drawn by the bar itself
                         }
                         t.push(TIcon { hwnd: h, uid, guid, icon: null_mut(), cb: 0, ver: 0, hidden: false, tip: String::new(), key: n.to_string() });
@@ -80,7 +86,32 @@ pub(crate) unsafe fn tray_msg(d: &[u8]) {
     });
 }
 
+/// What ITaskbarList asks of the task band, applied to `skip`: DeleteTab (HSHELL_WINDOWDESTROYED for a window that lives
+/// on) takes the window's button away, AddTab (HSHELL_WINDOWCREATED) gives it back. Closed windows are forgotten.
+/// true = the window's button comes or goes.
+fn taskband(skip: &mut Vec<HWND>, code: WPARAM, w: HWND, alive: impl Fn(HWND) -> bool) -> bool {
+    skip.retain(|&x| alive(x));
+    let had = skip.contains(&w);
+    match code {
+        2 if !had && alive(w) => skip.push(w),
+        1 if had => skip.retain(|&x| x != w),
+        _ => return false,
+    }
+    true
+}
+
 pub(crate) unsafe extern "system" fn tray_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    if msg != 0 && msg == SH_MSG.get() {
+        // ITaskbarList on the task band we named in TaskbandHWND. Tauri's skipTaskbar works this way, and Tauri sends it again
+        // when the bar announces itself (TaskbarCreated), so a restarted bar learns it too.
+        if SKIP.with_borrow_mut(|s| taskband(s, wp, lp as HWND, |x| IsWindow(x) != 0)) {
+            let bar = BAR.load(Relaxed) as HWND;
+            if !bar.is_null() && !WIN_DIRTY.replace(true) {
+                SetTimer(bar, 8, 30, None);
+            }
+        }
+        return 0;
+    }
     if msg == WM_COPYDATA {
         let c = &*(lp as *const Cds);
         if c.dw == 1 && c.cb >= 964 {
@@ -163,6 +194,29 @@ pub(crate) fn toggle_shown(key: &str) {
     }
     let _ = std::fs::write(appdata_file("topbar-tray.txt"), cur.join("\n"));
     SHOWN.set(Some(cur));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delete_tab_hides_and_add_tab_brings_back() {
+        let (a, b, gone) = (1 as HWND, 2 as HWND, 3 as HWND);
+        let alive = |x: HWND| x != gone;
+        let mut skip = vec![];
+        assert!(taskband(&mut skip, 2, a, alive)); // DeleteTab
+        assert!(!taskband(&mut skip, 2, a, alive)); // again (Tauri repeats it on TaskbarCreated): nothing new
+        assert!(!taskband(&mut skip, 1, b, alive)); // AddTab of a window that kept its button
+        assert!(!taskband(&mut skip, 2, gone, alive)); // a closed window
+        assert!(!taskband(&mut skip, 4, a, alive)); // ActivateTab and the rest change nothing
+        assert_eq!(skip, [a]);
+        assert!(taskband(&mut skip, 1, a, alive)); // AddTab
+        assert!(skip.is_empty());
+        skip.push(gone);
+        assert!(!taskband(&mut skip, 1, b, alive));
+        assert!(skip.is_empty(), "closed windows are forgotten");
+    }
 }
 
 // ---------- tray overflow flyout (the chevron): every icon, click / right click work as in the real tray ----------

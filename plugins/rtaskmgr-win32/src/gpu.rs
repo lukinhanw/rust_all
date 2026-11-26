@@ -139,7 +139,7 @@ fn locations() -> Vec<(String, String)> {
             if prop(0 /*SPDRP_DEVICEDESC*/, &mut desc) && prop(0x10 /*SPDRP_BUSNUMBER*/, &mut bus) && prop(0x1C /*SPDRP_ADDRESS*/, &mut addr) {
                 let w: Vec<u16> = desc.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes([c[0], c[1]])).take_while(|&c| c != 0).collect();
                 let (b, a) = (u32::from_le_bytes(bus), u32::from_le_bytes(addr));
-                out.push((String::from_utf16_lossy(&w), tf!("PCI-шина {b}, устройство {}, функция {}", "PCI bus {b}, device {}, function {}", ja: "PCI バス {b}、デバイス {}、機能 {}", pt: "Barramento PCI {b}, dispositivo {}, função {}", (a >> 16) & 0xFFFF, a & 0xFFFF)));
+                out.push((String::from_utf16_lossy(&w), tf!("PCI-шина {b}, устройство {}, функция {}", "PCI bus {b}, device {}, function {}", ja: "PCI バス {b}、デバイス {}、機能 {}", pt: "Barramento PCI {b}, dispositivo {}, função {}", zh: "PCI 总线 {b}，设备 {}，功能 {}", (a >> 16) & 0xFFFF, a & 0xFFFF)));
             }
         }
         SetupDiDestroyDeviceInfoList(set);

@@ -164,12 +164,32 @@ fn has_desktop(p: u32) -> bool {
     proc::cmdline(p).is_some_and(|c| c.contains("--desktop"))
 }
 
+const LENT: &str = "Local\\WinRust-ExplorerLent";
+
+/// True while a Settings page holds Explorer as the shell (rs-shell must not raise our desktop then: a desktop raised under it
+/// leaves Settings cloaked, and Explorer stays forever waiting for a window that never shows). A named object, set before our
+/// desktop is ended, so there is no moment where the desktop is gone and Explorer not yet visible as the shell.
+pub fn explorer_lent() -> bool {
+    use windows_sys::Win32::{Foundation::{CloseHandle, ERROR_ACCESS_DENIED, GetLastError}, System::Threading::OpenMutexW};
+    let h = unsafe { OpenMutexW(0x0010_0000 /* SYNCHRONIZE */, 0, w(LENT).as_ptr()) };
+    if h.is_null() {
+        return unsafe { GetLastError() } == ERROR_ACCESS_DENIED; // made by the elevated bar: exists, just not ours to open
+    }
+    unsafe { CloseHandle(h) };
+    true
+}
+
 fn run(uri: &str) {
     kill_stale();
     let mut started = false;
+    let mut lent = std::ptr::null_mut();
     if !explorer_shell() {
+        lent = unsafe { windows_sys::Win32::System::Threading::CreateMutexW(std::ptr::null(), 0, w(LENT).as_ptr()) };
         // our desktop is a window of class Progman too: with it up Explorer thinks a shell exists and starts as a plain folder host
         proc::pids("rust-explorer.exe").into_iter().filter(|&p| has_desktop(p)).for_each(proc::kill);
+        // a frame host left from an earlier Explorer stays tied to that dead shell: the Settings frame it hosts is cloaked for
+        // good. Without a shell its windows are not on screen anyway; COM starts a fresh one for the new Explorer.
+        proc::pids("ApplicationFrameHost.exe").into_iter().for_each(proc::kill);
         mark_autostart_done();
         let _ = proc::start_shell_explorer();
         wait(200, explorer_shell);
@@ -195,13 +215,15 @@ fn run(uri: &str) {
         // ends when Settings is closed, or when it hangs for good
         // the PIN / Windows Hello dialog is a process of its own hosted by Explorer's immersive shell, and Settings looks hung
         // while it waits on it: Explorer stays until both are gone (ending it under the dialog left it blank, #110)
-        let (mut bad, mut shown) = (0, false);
+        let (mut bad, mut shown, mut waited) = (0, false, 0);
         loop {
             let enrolling = !proc::pids(ENROLL).is_empty();
-            if !enrolling && (bad >= 5 || proc::pids(SETTINGS).is_empty()) {
+            // never on screen within a minute: it will not show any more (Explorer must not stay as the shell for good)
+            if !enrolling && (bad >= 5 || proc::pids(SETTINGS).is_empty() || (!shown && waited >= 30)) {
                 break;
             }
             sleep(Duration::from_secs(2));
+            waited += 1;
             // closing Settings leaves its process suspended with the window cloaked: that counts as closed, but only once it
             // was on screen (while the blue splash shows, its window is still cloaked)
             let on_screen = proc::pids(SETTINGS).into_iter().any(showing);
@@ -214,6 +236,9 @@ fn run(uri: &str) {
         if rx.is_file() && !proc::pids("rust-explorer.exe").into_iter().any(has_desktop) {
             let _ = Command::new(rx).arg("--desktop").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
         }
+    }
+    if !lent.is_null() {
+        unsafe { windows_sys::Win32::Foundation::CloseHandle(lent) };
     }
 }
 
@@ -255,6 +280,16 @@ pub fn open(uri: &str) {
 #[cfg(test)]
 mod tests {
     use super::own_page;
+
+    #[test]
+    fn lent_marker_lives_as_long_as_its_handle() {
+        use windows_sys::Win32::{Foundation::CloseHandle, System::Threading::CreateMutexW};
+        let h = unsafe { CreateMutexW(std::ptr::null(), 0, super::w(super::LENT).as_ptr()) };
+        assert!(!h.is_null());
+        assert!(super::explorer_lent());
+        unsafe { CloseHandle(h) };
+        assert!(!super::explorer_lent(), "gone with the last handle (no Settings page is open during the test)");
+    }
 
     #[test]
     fn only_exact_addresses_go_to_rust_settings() {

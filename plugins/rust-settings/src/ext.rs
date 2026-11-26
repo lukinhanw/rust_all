@@ -23,11 +23,11 @@ fn utf16(s: &[u16]) -> String {
 pub const INET: &str = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
 
 pub fn proxy_text() -> String {
-    sys::string_long(HKEY_CURRENT_USER, INET, "ProxyServer").filter(|s| !s.is_empty()).unwrap_or_else(|| t!("не задан", "not set", ja: "未設定", pt: "não definido").into())
+    sys::string_long(HKEY_CURRENT_USER, INET, "ProxyServer").filter(|s| !s.is_empty()).unwrap_or_else(|| t!("не задан", "not set", ja: "未設定", pt: "não definido", zh: "未设置").into())
 }
 
 pub fn pac_text() -> String {
-    sys::string_long(HKEY_CURRENT_USER, INET, "AutoConfigURL").filter(|s| !s.is_empty()).unwrap_or_else(|| t!("не задан", "not set", ja: "未設定", pt: "não definido").into())
+    sys::string_long(HKEY_CURRENT_USER, INET, "AutoConfigURL").filter(|s| !s.is_empty()).unwrap_or_else(|| t!("не задан", "not set", ja: "未設定", pt: "não definido", zh: "未设置").into())
 }
 
 /// A proxy address as WinINet takes it: `host:port` or `http=h:p;https=h:p`. Empty clears it.
@@ -127,7 +127,7 @@ pub fn ras_error(code: u32) -> String {
             return s;
         }
     }
-    tf!("код {}", "code {}", ja: "コード {}", pt: "código {}", code)
+    tf!("код {}", "code {}", ja: "コード {}", pt: "código {}", zh: "代码 {}", code)
 }
 
 /// Dials a profile with the credentials Windows saved for it. Blocks until it is up or has failed: call from a thread.
@@ -152,7 +152,7 @@ pub fn dial(name: &str, pbk: Option<&str>) -> Result<(), String> {
             if !h.is_null() {
                 RasHangUpW(h);
             }
-            return Err(if rc == ERROR_AUTHENTICATION_FAILURE as u32 || saved == 0 { t!("Нет сохранённого пароля: введите его один раз в параметрах VPN Windows", "No saved password: enter it once in Windows' VPN settings", ja: "保存されたパスワードがありません。Windows の VPN 設定で一度入力してください", pt: "Nenhuma senha salva: digite-a uma vez nas configurações de VPN do Windows").into() } else { ras_error(rc) });
+            return Err(if rc == ERROR_AUTHENTICATION_FAILURE as u32 || saved == 0 { t!("Нет сохранённого пароля: введите его один раз в параметрах VPN Windows", "No saved password: enter it once in Windows' VPN settings", ja: "保存されたパスワードがありません。Windows の VPN 設定で一度入力してください", pt: "Nenhuma senha salva: digite-a uma vez nas configurações de VPN do Windows", zh: "没有保存的密码：请先在 Windows 的 VPN 设置中输入一次").into() } else { ras_error(rc) });
         }
         Ok(())
     }
@@ -228,13 +228,13 @@ pub fn clean_temp(done: impl FnOnce(String) + Send + 'static) {
     std::thread::spawn(move || {
         let (b, n) = clean_dir(&temp_dir(), TEMP_AGE);
         TEMP_BYTES.store(dir_bytes(&temp_dir(), TEMP_AGE), Relaxed);
-        done(tf!("Удалено файлов: {} ({})", "Files deleted: {} ({})", ja: "削除したファイル: {} ({})", pt: "Arquivos excluídos: {} ({})", n, crate::power::size(b)));
+        done(tf!("Удалено файлов: {} ({})", "Files deleted: {} ({})", ja: "削除したファイル: {} ({})", pt: "Arquivos excluídos: {} ({})", zh: "已删除文件：{}（{}）", n, crate::power::size(b)));
     });
 }
 
 pub fn temp_text() -> String {
     match TEMP_BYTES.load(Relaxed) {
-        u64::MAX => t!("считаю…", "measuring…", ja: "測定中…", pt: "medindo…").into(),
+        u64::MAX => t!("считаю…", "measuring…", ja: "測定中…", pt: "medindo…", zh: "正在计算…").into(),
         b => crate::power::size(b),
     }
 }
@@ -269,7 +269,7 @@ pub fn night_kelvin() -> u32 {
 
 pub fn night_text() -> String {
     match night_kelvin() {
-        0 => t!("Выкл.", "Off", ja: "オフ", pt: "Desligado").into(),
+        0 => t!("Выкл.", "Off", ja: "オフ", pt: "Desligado", zh: "关").into(),
         k => format!("{k} K"),
     }
 }

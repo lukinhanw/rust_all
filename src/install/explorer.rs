@@ -81,7 +81,7 @@ fn trim_write((key, name): Dword<'_>, value: u32) -> Result<(), String> {
         return Err(trim_registry_error(key, name, code));
     }
     if trim_read((key, name))? != Some(value) {
-        return Err(tf!("{key}: не удалось подтвердить запись {name}", "{key}: could not verify the write to {name}", ja: "{key}: {name} への書き込みを確認できませんでした", pt: "{key}: não foi possível verificar a gravação em {name}"));
+        return Err(tf!("{key}: не удалось подтвердить запись {name}", "{key}: could not verify the write to {name}", ja: "{key}: {name} への書き込みを確認できませんでした", pt: "{key}: não foi possível verificar a gravação em {name}", zh: "{key}：无法确认对 {name} 的写入"));
     }
     Ok(())
 }
@@ -115,7 +115,7 @@ fn restore_service_trim() -> Result<(), String> {
     if !restored && rx_dir().join("rust-explorer.exe").is_file() {
         WARN.lock().unwrap().push(t!(
             "исходные настройки служб не сохранены; текущие значения оставлены как есть",
-            "no service settings were backed up; the current values were left in place", ja: "サービス設定のバックアップがありません。現在の値はそのままにしました", pt: "nenhuma configuração de serviço foi salva em backup; os valores atuais foram mantidos"
+            "no service settings were backed up; the current values were left in place", ja: "サービス設定のバックアップがありません。現在の値はそのままにしました", pt: "nenhuma configuração de serviço foi salva em backup; os valores atuais foram mantidos", zh: "未备份服务设置；已保留当前值"
         ).into());
     }
     Ok(())
@@ -132,7 +132,7 @@ pub(crate) fn rx_lnk() -> PathBuf {
 
 pub(crate) fn rx_install() -> Result<(), String> {
     if !bar_dir().join("topbar.exe").is_file() {
-        return Err(t!("сначала установите topbar: без него после отключения Explorer не будет панели", "install topbar first: without it there will be no bar after Explorer is disabled", ja: "先に topbar をインストールしてください。ないとエクスプローラーを無効にした後にバーがなくなります", pt: "instale a topbar primeiro: sem ela não haverá barra depois que o Explorer for desativado").into());
+        return Err(t!("сначала установите topbar: без него после отключения Explorer не будет панели", "install topbar first: without it there will be no bar after Explorer is disabled", ja: "先に topbar をインストールしてください。ないとエクスプローラーを無効にした後にバーがなくなります", pt: "instale a topbar primeiro: sem ela não haverá barra depois que o Explorer for desativado", zh: "请先安装 topbar：否则禁用 Explorer 后将没有任务栏").into());
     }
     // An older installation may already have applied the tweaks without saving the originals.
     let fresh = !rx_dir().join("rust-explorer.exe").is_file()
@@ -167,10 +167,11 @@ pub(crate) fn rx_install() -> Result<(), String> {
         // A logon task starts the overlay right at sign-in; Explorer runs the Run key only after its own startup delay (~20 s of
         // plain Windows on screen). Limited run level: the shell side must never run elevated. Fallback: the Run key.
         let task = format!("{} Register-ScheduledTask -TaskName rs-overlay -Force -Action (New-ScheduledTaskAction -Execute '{}' -Argument '--overlay') -Trigger (New-ScheduledTaskTrigger -AtLogOn -User $u) -Principal (New-ScheduledTaskPrincipal -UserId $u -LogonType Interactive -RunLevel Limited) -Settings (New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)) | Out-Null", task_user(), sh.display());
-        if run("powershell", &["-NoProfile", "-Command", &task]).is_ok() {
+        let task_ok = run("powershell", &["-NoProfile", "-Command", &task]).is_ok();
+        if task_ok {
             let _ = run("reg", &["delete", RUN_KEY, "/v", "rs-overlay", "/f"]);
         } else {
-            WARN.lock().unwrap().push(t!("задача rs-overlay не создана: запуск через Run, с задержкой Windows", "rs-overlay task was not created: it starts via Run, with a Windows startup delay", ja: "rs-overlay タスクを作成できませんでした: Windows の起動遅延付きで Run 経由で起動します", pt: "a tarefa rs-overlay não foi criada: ela inicia pelo Run, com o atraso de inicialização do Windows").into());
+            WARN.lock().unwrap().push(t!("задача rs-overlay не создана: запуск через Run, с задержкой Windows", "rs-overlay task was not created: it starts via Run, with a Windows startup delay", ja: "rs-overlay タスクを作成できませんでした: Windows の起動遅延付きで Run 経由で起動します", pt: "a tarefa rs-overlay não foi criada: ela inicia pelo Run, com o atraso de inicialização do Windows", zh: "rs-overlay 计划任务未创建：它将通过 Run 启动，会有 Windows 启动延迟").into());
             run("reg", &["add", RUN_KEY, "/v", "rs-overlay", "/t", "REG_SZ", "/d", &format!("\"{}\" --overlay", sh.display()), "/f"])?;
         }
         run("reg", &["add", RX_SWITCH, "/v", "ReplaceExplorer", "/t", "REG_DWORD", "/d", "1", "/f"])?;
@@ -179,12 +180,16 @@ pub(crate) fn rx_install() -> Result<(), String> {
             apply_service_trim();
         }
         // the bar's Start panel and the search list Start Menu shortcuts only: without one rust-explorer has no entry (and no icon) there
-        soft(t!("ярлык «Rust Explorer» в меню Пуск не создан", "Start menu shortcut 'Rust Explorer' was not created", ja: "スタート メニューのショートカット「Rust Explorer」を作成できませんでした", pt: "O atalho 'Rust Explorer' do menu Iniciar não foi criado"), shortcut(&start_lnk("Rust Explorer"), &fm, ""));
-        // Start it now, with the user's normal token: explorer.exe opens a shortcut unelevated, and the shortcut carries --overlay.
+        soft(t!("ярлык «Rust Explorer» в меню Пуск не создан", "Start menu shortcut 'Rust Explorer' was not created", ja: "スタート メニューのショートカット「Rust Explorer」を作成できませんでした", pt: "O atalho 'Rust Explorer' do menu Iniciar não foi criado", zh: "开始菜单快捷方式「Rust Explorer」未创建"), shortcut(&start_lnk("Rust Explorer"), &fm, ""));
+        // Start it now, with the user's normal token. The logon task does exactly that (the user's limited token, --overlay);
+        // `explorer.exe <shortcut>` is only the fallback: with Explorer not the shell it shows "File system error
+        // (-2147219195)" instead of opening the shortcut.
         let lnk = rx_lnk();
         let _ = fs::create_dir_all(lnk.parent().unwrap());
-        soft(t!("overlay не запущен сейчас: он стартует при следующем входе", "overlay is not running now: it starts at the next logon", ja: "オーバーレイは現在動作していません: 次回のログオン時に起動します", pt: "o overlay não está em execução agora: ele inicia no próximo logon"), shortcut(&lnk, &sh, "--overlay"));
-        let _ = Command::new("explorer.exe").arg(&lnk).spawn();
+        soft(t!("overlay не запущен сейчас: он стартует при следующем входе", "overlay is not running now: it starts at the next logon", ja: "オーバーレイは現在動作していません: 次回のログオン時に起動します", pt: "o overlay não está em execução agora: ele inicia no próximo logon", zh: "rs-overlay 当前未运行：它会在下次登录时启动"), shortcut(&lnk, &sh, "--overlay"));
+        if !(task_ok && run("schtasks", &["/run", "/tn", "rs-overlay"]).is_ok()) {
+            let _ = Command::new("explorer.exe").arg(&lnk).spawn();
+        }
         Ok(())
     })
 }
@@ -201,7 +206,7 @@ pub(crate) fn rx_uninstall() -> Result<(), String> {
         let _ = run("reg", &["delete", k, "/f"]); // only our HKCU override; the system's verbs under HKLM stay
         let bak = rx_folders_bak(i);
         if bak.is_file() {
-            soft(&tf!("привязка папок {k} не возвращена", "folder verbs {k} were not restored", ja: "フォルダー動詞 {k} を復元できませんでした", pt: "os verbos de pasta {k} não foram restaurados"), run("reg", &["import", &bak.display().to_string()]));
+            soft(&tf!("привязка папок {k} не возвращена", "folder verbs {k} were not restored", ja: "フォルダー動詞 {k} を復元できませんでした", pt: "os verbos de pasta {k} não foram restaurados", zh: "文件夹菜单命令 {k} 未恢复"), run("reg", &["import", &bak.display().to_string()]));
         }
     }
     for n in ["rs-shell.exe", "rust-explorer.exe"] {

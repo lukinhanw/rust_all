@@ -34,7 +34,7 @@ use winapi::um::winuser::*;
 fn net_selftest(out: &str) {
     use std::io::{Read, Write};
     let report = (|| -> Result<String, String> {
-        let ses = net::start().ok_or(t!("не удалось запустить ETW-сессию (нужны права администратора)", "could not start the ETW session (administrator rights needed)", ja: "ETW セッションを開始できませんでした (管理者権限が必要です)", pt: "não foi possível iniciar a sessão ETW (são necessários direitos de administrador)"))?;
+        let ses = net::start().ok_or(t!("не удалось запустить ETW-сессию (нужны права администратора)", "could not start the ETW session (administrator rights needed)", ja: "ETW セッションを開始できませんでした (管理者権限が必要です)", pt: "não foi possível iniciar a sessão ETW (são necessários direitos de administrador)", zh: "无法启动 ETW 会话（需要管理员权限）"))?;
         std::thread::sleep(Duration::from_millis(500));
         let l = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
         let addr = l.local_addr().map_err(|e| e.to_string())?;
@@ -58,9 +58,9 @@ fn net_selftest(out: &str) {
         let all = net::drain();
         net::stop(ses);
         let (rx, tx) = all.get(&me).copied().unwrap_or((0, 0));
-        Ok(tf!("pid={me} принято={rx} отправлено={tx} процессов_в_данных={}", "pid={me} received={rx} sent={tx} processes_in_data={}", ja: "pid={me} 受信={rx} 送信={tx} データ内のプロセス={}", pt: "pid={me} recebido={rx} enviado={tx} processos_nos_dados={}", all.len()))
+        Ok(tf!("pid={me} принято={rx} отправлено={tx} процессов_в_данных={}", "pid={me} received={rx} sent={tx} processes_in_data={}", ja: "pid={me} 受信={rx} 送信={tx} データ内のプロセス={}", pt: "pid={me} recebido={rx} enviado={tx} processos_nos_dados={}", zh: "pid={me} received={rx} sent={tx} processes_in_data={}", all.len()))
     })();
-    let _ = std::fs::write(out, report.unwrap_or_else(|e| tf!("ОШИБКА: {e}", "ERROR: {e}", ja: "エラー: {e}", pt: "ERRO: {e}")));
+    let _ = std::fs::write(out, report.unwrap_or_else(|e| tf!("ОШИБКА: {e}", "ERROR: {e}", ja: "エラー: {e}", pt: "ERRO: {e}", zh: "错误：{e}")));
 }
 
 fn xy(l: isize) -> (i32, i32) {
@@ -141,13 +141,13 @@ fn main() {
         .icon(Some(&icon_big))
         .size((cfg.size.0 as i32, cfg.size.1 as i32))
         .position(cfg.pos)
-        .title(t!("Диспетчер задач", "Task Manager", ja: "タスク マネージャー", pt: "Gerenciador de Tarefas"))
+        .title(t!("Диспетчер задач", "Task Manager", ja: "タスク マネージャー", pt: "Gerenciador de Tarefas", zh: "任务管理器"))
         .build(&mut win)
         .unwrap();
     let mut search = nwg::TextInput::default();
     nwg::TextInput::builder()
         .parent(&win)
-        .placeholder_text(Some(t!("Введите имя, издателя или PID для поиска", "Type a name, publisher or PID to search", ja: "名前、発行元、または PID を入力して検索", pt: "Digite um nome, editor ou PID para pesquisar")))
+        .placeholder_text(Some(t!("Введите имя, издателя или PID для поиска", "Type a name, publisher or PID to search", ja: "名前、発行元、または PID を入力して検索", pt: "Digite um nome, editor ou PID para pesquisar", zh: "输入名称、发布者或 PID 进行搜索")))
         .flags(nwg::TextInputFlags::VISIBLE | nwg::TextInputFlags::TAB_STOP)
         .position((0, 0))
         .size((300, 20))
@@ -158,7 +158,7 @@ fn main() {
     #[allow(deprecated)]
     nwg::Timer::builder().parent(&win).interval(1000).stopped(false).build(&mut timer).unwrap();
     let mut tray = nwg::TrayNotification::default();
-    nwg::TrayNotification::builder().parent(&win).icon(Some(&tray_icon)).tip(Some(t!("Диспетчер задач (Rust)", "Task Manager (Rust)", ja: "タスク マネージャー (Rust)", pt: "Gerenciador de Tarefas (Rust)"))).build(&mut tray).unwrap();
+    nwg::TrayNotification::builder().parent(&win).icon(Some(&tray_icon)).tip(Some(t!("Диспетчер задач (Rust)", "Task Manager (Rust)", ja: "タスク マネージャー (Rust)", pt: "Gerenciador de Tarefas (Rust)", zh: "任务管理器（Rust）"))).build(&mut tray).unwrap();
 
     let ui = Ui {
         page,
@@ -283,8 +283,11 @@ fn main() {
         match evt {
             E::OnWindowClose => {
                 if let nwg::EventData::OnWindowClose(d) = data {
-                    let to_tray = a.data.borrow().cfg.to_tray;
-                    if to_tray {
+                    let (asked, to_tray) = { let c = &a.data.borrow().cfg; (c.tray_asked, c.to_tray) };
+                    let to_tray = if asked { Some(to_tray) } else { a.ask_tray() };
+                    if to_tray.is_none() {
+                        d.close(false); // "Cancel": the window stays
+                    } else if to_tray == Some(true) {
                         d.close(false);
                         a.save_settings();
                         a.win.set_visible(false);

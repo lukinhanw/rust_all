@@ -4,7 +4,7 @@
 
 **Um shell do Windows escrito em Rust: mais rápido e mais leve que o original.** Programas nativos pequenos (sem .NET, sem Electron) que substituem partes do Windows: a barra de tarefas, o Explorador de Arquivos, a pesquisa de arquivos, o Gerenciador de Tarefas, além de um limpador de disco, um mapa de disco e um visualizador de fotos. Um instalador coloca tudo, um botão tira tudo.
 
-[English](README.md) | [Русский](README.ru.md) | [日本語](README.ja.md) | Português (Brasil)
+[English](README.md) | [Русский](README.ru.md) | [日本語](README.ja.md) | Português (Brasil) | [简体中文](README.zh.md)
 
 <p align="center"><img src="assets/th.jpg" alt="WinRust" width="480"></p>
 
@@ -20,15 +20,16 @@ A Pesquisa do Windows é opcional: em um Windows enxugado (por exemplo, uma imag
 
 Se o UAC pedir a senha de **outro administrador**, as configurações por usuário (itens de inicialização, tarefas agendadas, perfil do PowerShell, permissões de pesquisa) ainda vão para o usuário que está conectado, não para o administrador que você digitou. Se o instalador não conseguir identificar quem é, ele para antes de alterar qualquer coisa.
 
-**Atualizações automáticas:** após a primeira instalação, uma tarefa agendada `WinRust-update` (executa como SYSTEM, sem pedido do UAC) verifica a última versão na inicialização e uma vez por dia. Ela baixa apenas os programas que mudaram, confere cada arquivo com um manifesto assinado com a chave do projeto (uma versão adulterada ou sem assinatura é recusada) e substitui somente os arquivos que já estão instalados. Um programa em execução passa para a nova versão na próxima vez que iniciar (logon ou reinicialização). Log: `%ProgramData%\plugin-launcher\install.log` (linhas `autoupdate:`). Para desativar, desative a tarefa `WinRust-update` no Agendador de Tarefas; **Remover tudo** a exclui.
+**Atualizações automáticas:** após a primeira instalação, uma tarefa agendada `WinRust-update` (executa como SYSTEM, sem pedido do UAC) verifica a última versão na inicialização e uma vez por dia. Ela baixa o novo `WinRust.exe` (e qualquer programa que a versão traga separado) e confere cada arquivo com um manifesto assinado com a chave do projeto (uma versão adulterada ou sem assinatura é recusada); depois o novo `WinRust.exe` substitui os programas instalados que diferem dos que ele traz embutidos. Só arquivos que já estão instalados são substituídos. Um programa em execução passa para a nova versão na próxima vez que iniciar (logon ou reinicialização). Log: `%ProgramData%\plugin-launcher\install.log` (linhas `autoupdate:`). Para desativar, desative a tarefa `WinRust-update` no Agendador de Tarefas; **Remover tudo** a exclui.
 
 **Atualização manual:** baixe o novo `WinRust.exe` na página de versões, execute-o como administrador e selecione os componentes que quer atualizar ou instalar. Um `rust-explorer` existente continua selecionado por padrão nas atualizações. Suas configurações e os valores originais do Windows salvos permanecem.
 
-O instalador abre em inglês. O botão de idioma no canto dele (ou a engrenagem da barra → **Configurações da barra → Idioma**) troca todos os programas WinRust para o idioma escolhido: English, Русский, 日本語 ou Português (Brasil). A escolha fica em `%ProgramData%\WinRust\lang.txt` (`en`, `ru`, `ja`, `pt`).
+O instalador abre em inglês. A lista de idiomas fica no canto dele — English, Русский, 日本語, Português (Brasil), 简体中文 —, na engrenagem da barra (**Configurações da barra → Idioma**) e na página Personalização do rust-settings (**Idioma da interface**). A escolha fica em `%ProgramData%\WinRust\lang.txt` (`en`, `ru`, `ja`, `pt`, `zh`); o programa em que você trocou é redesenhado na hora, os outros leem o arquivo quando iniciam — reinicie-os (ou saia da sessão) depois da troca.
 
 ## Remoção
 
 - **Remover tudo** na janela do instalador desfaz tudo: a Pesquisa do Windows, a barra de tarefas, o Explorer e os serviços voltam.
+- Sem o instalador (por exemplo, se o antivírus o apagou): **Configurações → Aplicativos → Aplicativos instalados → WinRust → Desinstalar** faz o mesmo que Remover WinRust.
 - Um plugin por vez: `plugin-launcher uninstall <plugin>` (veja [Linha de comando](#linha-de-comando)).
 - **Se a tela ficar sem barra de tarefas ou área de trabalho:** pressione Ctrl+Alt+Del → Gerenciador de Tarefas → Executar nova tarefa → `explorer.exe`, depois execute o instalador e clique em Remover tudo.
 
@@ -92,7 +93,7 @@ Resumindo: **64–99% mais rápido ou menor nos testes de tamanho/velocidade, ig
 
 ### Carga em segundo plano
 
-Os programas que ficam rodando, antes e depois da reescrita orientada a eventos (branch `dev`, na próxima versão), na mesma máquina: tempo de CPU em 60 s de área de trabalho ociosa (`TotalProcessorTime` do processo), memória privada e handles abertos. "Antes" é a build instalada logo antes da reescrita.
+Os programas que ficam rodando, antes e depois da reescrita orientada a eventos da v0.5.7, na mesma máquina: tempo de CPU em 60 s de área de trabalho ociosa (`TotalProcessorTime` do processo), memória privada e handles abertos. "Antes" é a build instalada logo antes da reescrita.
 
 | Programa | CPU ociosa antes | depois | Memória privada antes | depois | Handles antes | depois |
 |---|---|---|---|---|---|---|
@@ -127,7 +128,7 @@ src/            o instalador (plugin-launcher.exe)
   main.rs         a tabela de plugins PLUGINS: nome, textos, par instalar/desinstalar, ícone
   install/        o que cada plugin altera e como é desfeito (um arquivo por plugin)
   cli.rs, ui.rs   a linha de comando e a janela; ambos chamam as mesmas funções de instalação
-common/         winrust-common: troca de idioma (t!/tf!), estilos e paletas da interface, analisador da saída do reg.exe, leitor da MFT do NTFS
+common/         winrust-common: troca de idioma (t!/tf!: inglês, russo, japonês, português do Brasil, chinês simplificado), estilos e paletas da interface, analisador da saída do reg.exe, leitor da MFT do NTFS
 plugins/        fontes de cada plugin, cada um em seu próprio crate
 ReShell/        reshell (atalhos da área de trabalho, rede de segurança da topbar), vem com a topbar
 payload.txt     os exes embutidos no instalador e onde a compilação os coloca
@@ -137,7 +138,7 @@ scripts/        compilação, atualização, versão
 Tudo é um único workspace do cargo (um `Cargo.lock`, todos os exes em `target\release`). `plugins/rust-search` e `plugins/chrome-rs` são compilados separadamente porque precisam de `panic = "unwind"` (veja `Cargo.toml`).
 
 ### Adicionar um idioma
-`t!("русский", "english", ja: "日本語", pt: "português")` e `tf!(…)` devolvem cada texto no idioma atual (sem `ja:` e `pt:`, japonês e português mostram o inglês). Os idiomas são o `Lang` em `common/src/lib.rs`.
+`t!("русский", "english", ja: "日本語", pt: "português", zh: "中文")` e `tf!(…)` devolvem cada texto no idioma atual (sem `ja:`/`pt:`/`zh:`, esses idiomas mostram o inglês). Os idiomas são o `Lang` em `common/src/lib.rs`.
 
 ### Compilação
 Requer Windows x64, Rust stable (1.85+) com a toolchain MSVC.

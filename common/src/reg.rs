@@ -10,6 +10,54 @@ pub fn value(out: &str) -> Option<(&str, &str)> {
     })
 }
 
+/// Native read, no reg.exe process: `path` like `HKLM\SOFTWARE\X` or `HKCU\...`; `name` None = the key itself.
+/// true when the key (or the value in it) exists.
+pub fn exists(path: &str, name: Option<&str>) -> bool {
+    raw(path, name).is_some()
+}
+
+/// A REG_DWORD read natively; None when missing or of another type.
+pub fn get_dword(path: &str, name: &str) -> Option<u32> {
+    raw(path, Some(name)).and_then(|(ty, b)| (ty == 4 && b.len() >= 4).then(|| u32::from_le_bytes(b[..4].try_into().unwrap())))
+}
+
+fn raw(path: &str, name: Option<&str>) -> Option<(u32, Vec<u8>)> {
+    use windows_sys::Win32::System::Registry::*;
+    let (root, sub) = path.split_once('\\').unwrap_or((path, ""));
+    let root = match root.to_ascii_uppercase().as_str() {
+        "HKLM" | "HKEY_LOCAL_MACHINE" => HKEY_LOCAL_MACHINE,
+        "HKCU" | "HKEY_CURRENT_USER" => HKEY_CURRENT_USER,
+        "HKU" | "HKEY_USERS" => HKEY_USERS,
+        "HKCR" | "HKEY_CLASSES_ROOT" => HKEY_CLASSES_ROOT,
+        _ => return None,
+    };
+    let w = |s: &str| s.encode_utf16().chain([0]).collect::<Vec<u16>>();
+    let sub = w(sub);
+    unsafe {
+        let mut k = std::ptr::null_mut();
+        if RegOpenKeyExW(root, sub.as_ptr(), 0, KEY_READ, &mut k) != 0 {
+            return None;
+        }
+        let r = match name {
+            None => Some((0, vec![])),
+            Some(n) => {
+                let n = w(n);
+                let (mut ty, mut len) = (0u32, 0u32);
+                if RegQueryValueExW(k, n.as_ptr(), std::ptr::null(), &mut ty, std::ptr::null_mut(), &mut len) != 0 {
+                    None
+                } else {
+                    let mut b = vec![0u8; len as usize];
+                    let ok = RegQueryValueExW(k, n.as_ptr(), std::ptr::null(), &mut ty, b.as_mut_ptr(), &mut len) == 0;
+                    b.truncate(len as usize);
+                    ok.then_some((ty, b))
+                }
+            }
+        };
+        RegCloseKey(k);
+        r
+    }
+}
+
 /// The value as a number when it is a REG_DWORD; None when missing or of another type.
 pub fn dword(out: &str) -> Option<u32> {
     match value(out)? {
@@ -60,5 +108,15 @@ mod tests {
         assert_eq!(value("    (Default)    REG_SZ    \r\n"), Some(("REG_SZ", "")));
         assert_eq!(dword("    V    REG_SZ    0x1\r\n"), None);
         assert_eq!(value("ERROR: The system was unable to find the specified registry key or value."), None);
+    }
+
+    #[test]
+    fn native_read() {
+        assert!(exists(r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion", Some("ProductName")));
+        assert!(exists(r"HKLM\SOFTWARE\Microsoft", None));
+        assert!(!exists(r"HKLM\SOFTWARE\no-such-key-winrust", None));
+        assert!(!exists(r"BAD\x", None));
+        assert!(get_dword(r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion", "CurrentMajorVersionNumber").is_some_and(|v| v >= 10));
+        assert_eq!(get_dword(r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion", "ProductName"), None, "REG_SZ is not a DWORD");
     }
 }

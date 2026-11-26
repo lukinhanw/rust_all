@@ -18,25 +18,57 @@ unsafe extern "system" {
     fn NtQueryInformationProcess(h: *mut c_void, class: u32, out: *mut c_void, len: u32, ret: *mut u32) -> i32;
 }
 
-/// `(pid, exe name)` of every running process.
-pub fn list() -> Vec<(u32, String)> {
-    let mut v = vec![];
+/// Calls `f` with every running process (one snapshot).
+fn each(mut f: impl FnMut(&PROCESSENTRY32W)) {
     unsafe {
         let s = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if s == INVALID_HANDLE_VALUE {
-            return v;
+            return;
         }
         let mut e: PROCESSENTRY32W = std::mem::zeroed();
         e.dwSize = size_of::<PROCESSENTRY32W>() as u32;
         let mut ok = Process32FirstW(s, &mut e) != 0;
         while ok {
-            let n = e.szExeFile.iter().position(|&c| c == 0).unwrap_or(e.szExeFile.len());
-            v.push((e.th32ProcessID, String::from_utf16_lossy(&e.szExeFile[..n])));
+            f(&e);
             ok = Process32NextW(s, &mut e) != 0;
         }
         CloseHandle(s);
     }
+}
+
+/// `(pid, exe name)` of every running process.
+pub fn list() -> Vec<(u32, String)> {
+    let mut v = vec![];
+    each(|e| {
+        let n = e.szExeFile.iter().position(|&c| c == 0).unwrap_or(e.szExeFile.len());
+        v.push((e.th32ProcessID, String::from_utf16_lossy(&e.szExeFile[..n])));
+    });
     v
+}
+
+/// Pids of the running processes that one of `parents` started.
+pub fn children(parents: &[u32]) -> Vec<u32> {
+    let mut v = vec![];
+    if !parents.is_empty() {
+        each(|e| if parents.contains(&e.th32ParentProcessID) { v.push(e.th32ProcessID) });
+    }
+    v
+}
+
+/// Exe file name of one process (`SearchHost.exe`), without a snapshot of all of them. None when it cannot be opened.
+pub fn exe_name(pid: u32) -> Option<String> {
+    use windows_sys::Win32::System::Threading::{PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW};
+    unsafe {
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if h.is_null() {
+            return None;
+        }
+        let (mut b, mut n) = ([0u16; 520], 520u32);
+        let ok = QueryFullProcessImageNameW(h, 0, b.as_mut_ptr(), &mut n) != 0;
+        CloseHandle(h);
+        let path = String::from_utf16_lossy(&b[..n as usize]);
+        ok.then(|| path.rsplit('\\').next().unwrap_or("").to_string())
+    }
 }
 
 /// Pids of the processes with this exe name (case-insensitive, e.g. `explorer.exe`).
@@ -155,5 +187,17 @@ mod tests {
         let me = std::process::id();
         assert!(super::list().iter().any(|(p, _)| *p == me));
         assert!(super::cmdline(me).is_some_and(|c| !c.is_empty()));
+        let name = super::exe_name(me).unwrap();
+        assert!(name.to_lowercase().ends_with(".exe") && !name.contains('\\'), "{name}");
+        assert!(super::list().iter().any(|(p, n)| *p == me && n.eq_ignore_ascii_case(&name)));
+    }
+
+    #[test]
+    fn lists_the_children_of_a_process() {
+        let mut child = std::process::Command::new("cmd").args(["/c", "ping -n 30 127.0.0.1 >nul"]).spawn().unwrap();
+        let kids = super::children(&[std::process::id()]);
+        let _ = child.kill();
+        assert!(kids.contains(&child.id()), "{kids:?}");
+        assert!(super::children(&[]).is_empty());
     }
 }

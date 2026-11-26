@@ -5,7 +5,8 @@
 // Ctrl+T/W/Tab tabs, Ctrl+M thumbnails, Ctrl+L/F4 address bar, Ctrl+F or "? terms" in the bar = instant search through the rs service, right click / Menu key = shell context menu.
 // Look: topbar's palette, painted tabs / toolbar / address pill and status line (src/ui.rs), dark title bar and list.
 // Clipboard is the system one (Ctrl+C/X/V interoperate with Explorer). Also: Alt+Left/Right back/forward, Alt+Up up,
-// Alt+Enter properties, F5 refresh, Ctrl+H hidden files, click a column header to sort, right click on empty space = folder menu.
+// Alt+Enter properties, F5 refresh, Ctrl+H hidden files, click a column header to sort, right click on empty space = folder menu,
+// middle click on a folder = open it in a new tab.
 // shortcuts: std::fs listing (not FindFirstFileEx large fetch), icons are extension-based (exe/lnk/ico/url/scr
 // per file) and synchronous (thumbnails: one background thread, 96px, no disk cache), internal copy/cut clipboard, silent rename errors,
 // search blocks the UI while it waits for the service (no async), the service pipe is admin-only so run as admin,
@@ -17,10 +18,9 @@
 //   shortcuts: wallpaper is loaded once (changing it needs a restart), icon labels are always white, no background menu /
 //   drag-to-position / auto-arrange, items from the public desktop can't be renamed.
 #![windows_subsystem = "windows"]
-#[macro_use]
-extern crate winrust_common; // t!: the menus in the language picked for every WinRust program (%ProgramData%\WinRust\lang.txt)
 use std::{cell::RefCell, env, fs, os::windows::fs::MetadataExt, path::{Path, PathBuf}, ptr, sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed}};
-use windows_sys::Win32::{Foundation::*, Graphics::Gdi::{GetStockObject, InvalidateRect}, System::LibraryLoader::GetModuleHandleW, UI::{Controls::*, Input::KeyboardAndMouse::{GetKeyState, SetFocus, VK_CONTROL}, Shell::*, WindowsAndMessaging::*}};
+use winrust_common::{t, tf};
+use windows_sys::Win32::{Foundation::*, Graphics::Gdi::{GetStockObject, InvalidateRect, ScreenToClient}, System::LibraryLoader::GetModuleHandleW, UI::{Controls::*, Input::KeyboardAndMouse::{GetKeyState, SetFocus, VK_CONTROL}, Shell::*, WindowsAndMessaging::*}};
 
 mod zipx; // our own ZIP engine (deflate, inflate, container)
 mod jobs; // our own copier, ZIP packer, ZIP/7z unpacker (background, progress in the status line)
@@ -123,6 +123,7 @@ static SORT_ASC: AtomicBool = AtomicBool::new(true);
 static SHOW_HIDDEN: AtomicBool = AtomicBool::new(false); // Ctrl+H
 static NAV: AtomicBool = AtomicBool::new(false); // loading from the back / forward trail: do not record it again
 const WM_NAV: u32 = WM_APP + 3; // wp: 1 back, 2 forward, 3 properties, 4 up (sent from the message loop for Alt+key)
+const WM_DIRSIZE: u32 = WM_APP + 7; // folder-size worker -> UI: wp = Box<(era, folder name, bytes)> (#147)
 const WM_JOB: u32 = WM_APP + 5; // jobs.rs worker finished: wp = Box<Option<String>> (the error, if any)
 const WM_WALL: u32 = WM_APP + 6; // desktop: the wallpaper BMP was remade, paint the new picture
 
@@ -172,12 +173,14 @@ fn row(name: String, m: Option<&fs::Metadata>) -> Row {
     Row { name, dir: m.is_some_and(|m| m.is_dir()), size: m.map_or(0, |m| m.len()), time: m.map_or(0, |m| m.last_write_time()), icon: -1, thumb: -2, hdr: false }
 }
 
-/// Folders always first; inside each group by the column (0 name, 1 size, 2 modified), ties by name.
+/// Folders first (unless "Folders first" is off in the folder's menu, #162); inside each group by the column (0 name, 1 size, 2 modified), ties by name.
 fn sort_rows(rows: &mut [Row], col: usize, asc: bool) {
     let key = |r: &Row| r.name.rsplit('\\').next().unwrap_or("").to_lowercase();
+    let mixed = !desk() && mixed_marker().exists();
     rows.sort_by(|a, b| {
         let o = match col { 1 => a.time.cmp(&b.time), 2 => type_text(&a.name, a.dir).cmp(&type_text(&b.name, b.dir)), 3 => a.size.cmp(&b.size), _ => key(a).cmp(&key(b)) };
-        (!a.dir).cmp(&!b.dir).then(if asc { o } else { o.reverse() }).then_with(|| key(a).cmp(&key(b)))
+        let dirs = if mixed { std::cmp::Ordering::Equal } else { (!a.dir).cmp(&!b.dir) };
+        dirs.then(if asc { o } else { o.reverse() }).then_with(|| key(a).cmp(&key(b)))
     });
     // grouped by date: the groups are contiguous (the stable sort keeps the order above inside each one)
     if group_on() { bucket_refresh(); rows.sort_by_cached_key(|r| bucket(r.time)); }
@@ -186,24 +189,25 @@ fn sort_rows(rows: &mut [Row], col: usize, asc: bool) {
 // ---------- grouping by date ("Group by date" in the folder's menu): Today, Yesterday, Earlier this week, ... ----------
 
 const DAY: i64 = 864_000_000_000; // FILETIME ticks per day
-/// The date group headings, in the chosen language.
-fn buckets() -> [&'static str; 8] {
+/// The date headings of "Group by date", in bucket order: shown above the rows of each group.
+fn bucket_name(i: usize) -> &'static str {
     [
-        t!("Сегодня", "Today", pt: "Hoje"),
-        t!("Вчера", "Yesterday", pt: "Ontem"),
-        t!("Ранее на этой неделе", "Earlier this week", pt: "No início desta semana"),
-        t!("На прошлой неделе", "Last week", pt: "Semana passada"),
-        t!("Ранее в этом месяце", "Earlier this month", pt: "No início deste mês"),
-        t!("В прошлом месяце", "Last month", pt: "Mês passado"),
-        t!("Ранее в этом году", "Earlier this year", pt: "No início deste ano"),
-        t!("Давно", "A long time ago", pt: "Há muito tempo"),
-    ]
+        t!("Сегодня", "Today", ja: "今日", pt: "Hoje", zh: "今天"),
+        t!("Вчера", "Yesterday", ja: "昨日", pt: "Ontem", zh: "昨天"),
+        t!("Ранее на этой неделе", "Earlier this week", ja: "今週", pt: "No início desta semana", zh: "本周早些时候"),
+        t!("На прошлой неделе", "Last week", ja: "先週", pt: "Semana passada", zh: "上周"),
+        t!("Ранее в этом месяце", "Earlier this month", ja: "今月", pt: "No início deste mês", zh: "本月早些时候"),
+        t!("В прошлом месяце", "Last month", ja: "先月", pt: "Mês passado", zh: "上个月"),
+        t!("Ранее в этом году", "Earlier this year", ja: "今年", pt: "No início deste ano", zh: "今年早些时候"),
+        t!("Давно", "A long time ago", ja: "ずっと前", pt: "Há muito tempo", zh: "很久以前"),
+    ][i]
 }
 
 thread_local! {
     static BCTX: std::cell::Cell<(i64, i64)> = const { std::cell::Cell::new((0, 0)) }; // (today's local day number, local - UTC in ticks)
 }
 
+fn mixed_marker() -> PathBuf { PathBuf::from(env::var_os("APPDATA").unwrap_or_default()).join("rust-explorer").join("folders-mixed") }
 fn group_marker() -> PathBuf { PathBuf::from(env::var_os("APPDATA").unwrap_or_default()).join(r"rust-explorer\group-by-date") }
 static THUMBS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false); // thumbnail view: no headings
 fn group_on() -> bool { !desk() && !THUMBS.load(Relaxed) && group_marker().exists() }
@@ -242,7 +246,7 @@ fn add_headers(rows: &mut Vec<Row>) {
         let b = bucket(r.time);
         if b != last {
             last = b;
-            out.push(Row { name: format!("?{}", buckets()[b as usize]), dir: false, size: 0, time: 0, icon: -1, thumb: -1, hdr: true });
+            out.push(Row { name: format!("?{}", bucket_name(b as usize)), dir: false, size: 0, time: 0, icon: -1, thumb: -1, hdr: true });
         }
         out.push(r);
     }
@@ -251,12 +255,9 @@ fn add_headers(rows: &mut Vec<Row>) {
 
 /// Explorer's "Type" column in short form: "File folder", "TXT file", "File".
 fn type_text(name: &str, dir: bool) -> String {
-    if dir { return t!("Папка с файлами", "File folder", pt: "Pasta de arquivos").into(); }
+    if dir { return t!("Папка с файлами", "File folder", ja: "ファイル フォルダー", pt: "Pasta de arquivos", zh: "文件夹").into(); }
     let file = name.rsplit('\\').next().unwrap_or(name);
-    match file.rsplit_once('.') {
-        Some((stem, e)) if !stem.is_empty() && !e.is_empty() => tf!("Файл \"{}\"", "{} file", pt: "Arquivo {}", e.to_uppercase()),
-        _ => t!("Файл", "File", pt: "Arquivo").into(),
-    }
+    match file.rsplit_once('.') { Some((stem, e)) if !stem.is_empty() && !e.is_empty() => tf!("Файл {}", "{} file", ja: "{} ファイル", pt: "Arquivo {}", zh: "{} 文件", e.to_uppercase()), _ => t!("Файл", "File", ja: "ファイル", pt: "Arquivo", zh: "文件").into() }
 }
 
 /// Explorer shows file sizes in KB; the bigger ones read better in MB / GB.
@@ -418,11 +419,11 @@ fn zip_menu(h: HWND, paths: &[PathBuf]) {
     let id = unsafe {
         let m = CreatePopupMenu();
         let items = [
-            (1usize, t!("Открыть", "Open", ja: "開く", pt: "Abrir")),
-            (2, t!("Копировать", "Copy", ja: "コピー", pt: "Copiar")),
-            (3, t!("Извлечь сюда", "Extract here", ja: "ここに展開", pt: "Extrair aqui")),
+            (1usize, t!("Открыть", "Open", ja: "開く", pt: "Abrir", zh: "打开")),
+            (2, t!("Копировать", "Copy", ja: "コピー", pt: "Copiar", zh: "复制")),
+            (3, t!("Извлечь сюда", "Extract here", ja: "ここに展開", pt: "Extrair aqui", zh: "解压到此处")),
         ];
-        for (i, t) in items { AppendMenuW(m, MF_STRING, i, w(t).as_ptr()); }
+        for (i, lbl) in items { AppendMenuW(m, MF_STRING, i, w(lbl).as_ptr()); }
         let mut pt: POINT = std::mem::zeroed();
         GetCursorPos(&mut pt);
         let id = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, h, ptr::null());
@@ -452,22 +453,13 @@ fn zip_menu(h: HWND, paths: &[PathBuf]) {
 /// The shell menu for the selection, with our "Compress to ZIP" / "Extract here" on top.
 fn item_menu(h: HWND, dir: &Path, paths: &[PathBuf]) {
     if zipx::split_zip(dir).is_some() { return zip_menu(h, paths); }
-    let mut extra = vec![(MENU_ZIP, t!("Сжать в ZIP", "Compress to ZIP", ja: "ZIP に圧縮", pt: "Compactar em ZIP"))];
+    let mut extra = vec![(MENU_ZIP, t!("Сжать в ZIP", "Compress to ZIP", ja: "ZIP に圧縮", pt: "Compactar em ZIP", zh: "压缩为 ZIP"))];
     if paths.iter().all(|p| p.is_file() && jobs::is_archive(p)) {
-        extra.insert(0, (MENU_EXTRACT, t!("Извлечь сюда", "Extract here", ja: "ここに展開", pt: "Extrair aqui")));
+        extra.insert(0, (MENU_EXTRACT, t!("Извлечь сюда", "Extract here", ja: "ここに展開", pt: "Extrair aqui", zh: "解压到此处")));
     }
     // the shell menu has no Rename here (it needs the shell's own folder view to answer it): the same edit box as F2
-    if paths.len() == 1 { extra.push((MENU_RENAME, t!("Переименовать", "Rename", ja: "名前の変更", pt: "Renomear"))); }
-    if let [p] = paths {
-        if p.is_dir() {
-            let pin = if ui::pins().contains(p) {
-                t!("Открепить от панели быстрого доступа", "Unpin from Quick access", ja: "クイック アクセスからピン留めを外す", pt: "Desafixar do Acesso rápido")
-            } else {
-                t!("Закрепить на панели быстрого доступа", "Pin to Quick access", ja: "クイック アクセスにピン留め", pt: "Fixar no Acesso rápido")
-            };
-            extra.push((MENU_PIN, pin));
-        }
-    }
+    if paths.len() == 1 { extra.push((MENU_RENAME, t!("Переименовать", "Rename", ja: "名前の変更", pt: "Renomear", zh: "重命名"))); }
+    if let [p] = paths { if p.is_dir() { extra.push((MENU_PIN, if ui::pins().contains(p) { t!("Открепить от быстрого доступа", "Unpin from Quick access", ja: "クイック アクセスからピン留めを解除", pt: "Desafixar do Acesso rápido", zh: "从快速访问取消固定") } else { t!("Закрепить в быстром доступе", "Pin to Quick access", ja: "クイック アクセスにピン留め", pt: "Fixar no Acesso rápido", zh: "固定到快速访问") })); } }
     let picked = sh::show(h, paths, if jobs::busy() { &[] } else { &extra }).ok().flatten();
     match picked {
         Some(MENU_PIN) => ui::toggle_pin(&paths[0]),
@@ -533,6 +525,21 @@ unsafe fn bg_menu(h: HWND) {
         add(sort, 11, t!("Выровнять значки", "Arrange icons", ja: "アイコンを整列", pt: "Organizar ícones"), None, None, Mark::None);
         add(m, 0, t!("Сортировка", "Sort by", pt: "Classificar por"), Some("\u{E8CB}"), Some(sort), Mark::None);
     } else {
+        // Sort by: the column (dotted), the direction, folders first (ticked), like the Windows 11 folder menu
+        let sort = CreatePopupMenu();
+        let (col, asc) = (SORT_COL.load(Relaxed), SORT_ASC.load(Relaxed));
+        let dot = |on: bool| if on { Mark::Dot } else { Mark::None };
+        // columns of sort_rows: 0 name, 1 modified, 2 type, 3 size
+        add(sort, 20, t!("Имя", "Name", ja: "名前", pt: "Nome", zh: "名称"), None, None, dot(col == 0));
+        add(sort, 21, t!("Дата изменения", "Date modified", ja: "更新日時", pt: "Data de modificação", zh: "修改日期"), None, None, dot(col == 1));
+        add(sort, 22, t!("Тип", "Type", ja: "種類", pt: "Tipo", zh: "类型"), None, None, dot(col == 2));
+        add(sort, 23, t!("Размер", "Size", ja: "サイズ", pt: "Tamanho", zh: "大小"), None, None, dot(col == 3));
+        menu::sep(sort);
+        add(sort, 30, t!("По возрастанию", "Ascending", ja: "昇順", pt: "Crescente", zh: "升序"), None, None, dot(asc));
+        add(sort, 31, t!("По убыванию", "Descending", ja: "降順", pt: "Decrescente", zh: "降序"), None, None, dot(!asc));
+        menu::sep(sort);
+        add(sort, 17, t!("Папки сверху", "Folders first", ja: "フォルダーを先頭に表示", pt: "Pastas primeiro", zh: "文件夹优先"), None, None, if mixed_marker().exists() { Mark::None } else { Mark::Tick });
+        add(m, 0, t!("Сортировка", "Sort by", ja: "並べ替え", pt: "Classificar por", zh: "排序方式"), Some("\u{E8CB}"), Some(sort), Mark::None);
         let group = CreatePopupMenu();
         let on = group_on();
         add(group, 13, t!("Дата изменения", "Date modified", pt: "Data de modificação"), None, None, if on { Mark::Dot } else { Mark::None });
@@ -554,6 +561,12 @@ unsafe fn bg_menu(h: HWND) {
     let dir = cur_dir();
     match id {
         7 => set_icons_hidden(!icons_hidden()),
+        20..=23 => SORT_COL.store(id as usize - 20, Relaxed), // the reload below sorts again
+        30 | 31 => SORT_ASC.store(id == 30, Relaxed),
+        17 => { // folders first on / off
+            let k = mixed_marker();
+            if k.exists() { let _ = fs::remove_file(&k); } else { if let Some(d) = k.parent() { let _ = fs::create_dir_all(d); } let _ = fs::write(&k, "1"); }
+        }
         13 | 16 => { // group by date on (13) / off (16)
             let k = group_marker();
             if id == 16 { let _ = fs::remove_file(&k); } else { if let Some(d) = k.parent() { let _ = fs::create_dir_all(d); } let _ = fs::write(&k, "1"); }
@@ -572,8 +585,8 @@ unsafe fn bg_menu(h: HWND) {
             let drive: String = dir.to_string_lossy().chars().take(2).collect();
             if let Some(exe) = disk { let _ = std::process::Command::new(exe).arg(drive).spawn(); }
         }
-        1 => new_entry(&dir, t!("Новая папка", "New folder", ja: "新しいフォルダー", pt: "Nova pasta"), true),
-        2 => new_entry(&dir, t!("Новый текстовый документ.txt", "New text document.txt", ja: "新しいテキスト ドキュメント.txt", pt: "Novo documento de texto.txt"), false),
+        1 => new_entry(&dir, t!("Новая папка", "New folder", ja: "新しいフォルダー", pt: "Nova pasta", zh: "新建文件夹"), true),
+        2 => new_entry(&dir, t!("Новый текстовый документ.txt", "New text document.txt", ja: "新しいテキスト ドキュメント.txt", pt: "Novo documento de texto.txt", zh: "新建文本文档.txt"), false),
         3 => paste(h, &dir),
         5 => properties(&dir),
         _ => {}
@@ -673,6 +686,15 @@ fn shown_name(name: &str, desktop: bool) -> String {
     if lower.ends_with(".lnk") || lower.ends_with(".url") { file[..file.len() - 4].to_string() } else { file }
 }
 
+/// Type-ahead of the virtual list (LVN_ODFINDITEM): the first row at or after `start` whose name begins with `typed`, wrapping
+/// round to the top. Case is ignored; `name_at(i)` is None for the date-group heading rows, which are never a match. A list
+/// with LVS_OWNERDATA asks us because it has no items of its own to search: unanswered, it always lands on the first row.
+fn find_row(len: usize, start: usize, typed: &str, name_at: impl Fn(usize) -> Option<String>) -> Option<usize> {
+    let typed = typed.to_lowercase();
+    if typed.is_empty() || len == 0 { return None; }
+    (0..len).map(|k| (start.min(len) + k) % len).find(|&i| name_at(i).is_some_and(|n| n.to_lowercase().starts_with(&typed)))
+}
+
 fn label(dir: &PathBuf) -> String {
     dir.file_name().map_or_else(|| dir.to_string_lossy().into_owned(), |n| n.to_string_lossy().into_owned())
 }
@@ -725,6 +747,7 @@ fn load(h: HWND, dir: PathBuf) {
     reset_thumbs();
     put(list, LVM_DELETEALLITEMS, 0, 0);
     if desk() { desk::fill(list, n); } else { put(list, LVM_SETITEMCOUNT, n, 0); }
+    folder_sizes(h, dir, ST.with_borrow(|st| st.rows.iter().filter(|r| r.dir && !r.hdr).map(|r| r.name.clone()).collect()));
 }
 
 /// Asks the rust-search service of drive `d` (see plugins/rust-search): terms in, one path per line out.
@@ -758,16 +781,16 @@ fn search(h: HWND, q: &str) {
     if !indexed {
         // no rust-search installed: look through the current folder and below instead
         let (local, cut, flipped) = local_search(&cur_dir(), q);
-        if flipped { more = tf!(" по запросу \u{201C}{}\u{201D}", " for \u{201C}{}\u{201D}", pt: " para \u{201C}{}\u{201D}", flip_layout(q)); } // typed in the wrong layout: shown what was meant
+        if flipped { more = tf!(" для «{}»", " for \u{201C}{}\u{201D}", ja: "「{}」として", pt: " para \u{201C}{}\u{201D}", zh: "（按「{}」）", flip_layout(q)); } // typed in the wrong layout: shown what was meant
         rows = local;
-        if cut { more += t!(", поиск остановлен: уточните запрос", ", stopped early: narrow the search", pt: ", parou antes: refine a busca"); }
+        if cut { more += t!(", остановлено: уточните запрос", ", stopped early: narrow the search", ja: "、中断: 検索範囲を狭めてください", pt: ", interrompido: refine a pesquisa", zh: "，已提前停止：请缩小搜索范围"); }
     }
     let n = rows.len();
-    let where_ = if indexed { "" } else { t!(" в этой папке", " in this folder", pt: " nesta pasta") };
+    let where_ = if indexed { "" } else { t!(" в этой папке", " in this folder", ja: "（このフォルダー内）", pt: " nesta pasta", zh: "（仅此文件夹）") };
     let title = if n == 0 {
-        tf!("поиск: {} - ничего{}", "search: {} - nothing{}", pt: "busca: {} - nada{}", q, where_)
+        tf!("поиск: {} - ничего не найдено{}{}", "search: {} - nothing{}{}", ja: "検索: {} - 見つかりません{}{}", pt: "pesquisa: {} - nada encontrado{}{}", zh: "搜索：{} - 无结果{}{}", q, where_, "")
     } else {
-        tf!("поиск: {} - найдено {}{}{}", "search: {} - {} hits{}{}", pt: "busca: {} - {} resultados{}{}", q, n, where_, more)
+        tf!("поиск: {} - совпадений: {}{}{}", "search: {} - {} hits{}{}", ja: "検索: {} - {} 件{}{}", pt: "pesquisa: {} - {} resultados{}{}", zh: "搜索：{} - {} 个结果{}{}", q, n, where_, more)
     };
     ui::set_search(Some(q.to_string()));
     unsafe { SetWindowTextW(h, w(&title).as_ptr()) };
@@ -816,6 +839,35 @@ fn reset_thumbs() {
     unsafe { ImageList_Remove(himl as _, -1) };
 }
 
+/// Bytes under `p`, not following junctions or symlinks (they point elsewhere, often back up the tree); stops when `stale`.
+fn tree_size(p: &std::path::Path, stale: &dyn Fn() -> bool) -> u64 {
+    const REPARSE: u32 = 0x400; // FILE_ATTRIBUTE_REPARSE_POINT
+    let Ok(rd) = fs::read_dir(p) else { return 0 };
+    let mut n = 0;
+    for e in rd.flatten() {
+        if stale() { return n; }
+        let Ok(m) = e.metadata() else { continue };
+        if m.file_attributes() & REPARSE != 0 { continue; }
+        n += if m.is_dir() { tree_size(&e.path(), stale) } else { m.len() };
+    }
+    n
+}
+
+/// Fills the Size column of the folders in `dir` in the background, one folder at a time; a new listing stops it.
+/// shortcut: walks with read_dir (no MFT, no cache); a drive root is skipped because that walk is the whole disk.
+fn folder_sizes(h: HWND, dir: PathBuf, names: Vec<String>) {
+    if desk() || dir.parent().is_none() || names.is_empty() { return; }
+    let (era, hw) = (GEN.load(Relaxed), h as usize);
+    std::thread::spawn(move || {
+        let stale = || GEN.load(Relaxed) != era;
+        for name in names {
+            let n = tree_size(&dir.join(&name), &stale);
+            if stale() { return; }
+            unsafe { PostMessageW(hw as HWND, WM_DIRSIZE, Box::into_raw(Box::new((era, name, n))) as usize, 0) };
+        }
+    });
+}
+
 fn reload(h: HWND) { load(h, cur_dir()); }
 
 /// (list, current dir, full paths of the selected rows)
@@ -843,6 +895,12 @@ fn col(list: HWND, i: i32, text: &str, width: i32, right: bool) {
 fn tab_new() {
     let tab = ST.with_borrow_mut(|st| { st.tabs.push(st.dir.clone()); st.active = st.tabs.len() - 1; st.tab });
     tab_text(tab, 0, "", true);
+}
+
+/// Opens `dir` in a new tab, staying on the current one (middle click on a folder row).
+fn tab_open(dir: PathBuf) {
+    let tab = ST.with_borrow_mut(|st| { st.tabs.push(dir); st.tab });
+    tab_text(tab, 0, "", true); // insert: the bar repaints with the new tab, the listing stays
 }
 
 fn tab_select(h: HWND, i: usize) {
@@ -1674,10 +1732,10 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                     let _ = TX.set(sh::start_thumbs(h as isize));
                     ST.with_borrow_mut(|st| st.himl = himl as isize);
                     // the same columns, in the same order, as Explorer's details view
-                    col(list, 0, t!("Имя", "Name", pt: "Nome"), ui::sc(360), false);
-                    col(list, 1, t!("Дата изменения", "Date modified", pt: "Data de modificação"), ui::sc(160), false);
-                    col(list, 2, t!("Тип", "Type", pt: "Tipo"), ui::sc(140), false);
-                    col(list, 3, t!("Размер", "Size", pt: "Tamanho"), ui::sc(96), true);
+                    col(list, 0, t!("Имя", "Name", ja: "名前", pt: "Nome", zh: "名称"), ui::sc(360), false);
+                    col(list, 1, t!("Дата изменения", "Date modified", ja: "更新日時", pt: "Data de modificação", zh: "修改日期"), ui::sc(160), false);
+                    col(list, 2, t!("Тип", "Type", ja: "種類", pt: "Tipo", zh: "类型"), ui::sc(140), false);
+                    col(list, 3, t!("Размер", "Size", ja: "サイズ", pt: "Tamanho", zh: "大小"), ui::sc(96), true);
                     ui::style_list(list);
                 }
                 ST.with_borrow_mut(|st| { st.list = list; st.tab = tab; st.edit = edit; st.tabs = vec![PathBuf::new()]; });
@@ -1729,6 +1787,21 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
             }
             // mouse buttons 4 / 5 (and keyboard media keys) arrive as APPCOMMAND_BROWSER_BACKWARD / _FORWARD
             0x0319 if !desk() && matches!((lp >> 16) & 0x7FF, 1 | 2) => { nav(h, (lp >> 16) & 0x7FF == 1); 1 }
+            // the list reports its button downs here: middle click on a folder row opens it in a new tab
+            WM_PARENTNOTIFY if !desk() && (wp & 0xFFFF) as u32 == WM_MBUTTONDOWN => {
+                let list = ST.with_borrow(|st| st.list);
+                let mut pt: POINT = std::mem::zeroed();
+                GetCursorPos(&mut pt);
+                if WindowFromPoint(pt) == list {
+                    ScreenToClient(list, &mut pt);
+                    let mut ht: LVHITTESTINFO = std::mem::zeroed();
+                    ht.pt = pt;
+                    let i = put(list, LVM_SUBITEMHITTEST, 0, &mut ht as *mut _ as isize);
+                    let dir = ST.with_borrow(|st| usize::try_from(i).ok().and_then(|i| st.rows.get(i)).filter(|r| r.dir && !r.hdr).map(|r| st.dir.join(&r.name)));
+                    if let Some(d) = dir { tab_open(d); }
+                }
+                0
+            }
             WM_SIZE => {
                 let list = ST.with_borrow(|st| st.list);
                 let (cw, ch) = ((lp & 0xFFFF) as i32, ((lp >> 16) & 0xFFFF) as i32);
@@ -1812,7 +1885,7 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                             let Some(i) = usize::try_from(it.iItem).ok() else { return };
                             let Some(r) = rows.get_mut(i) else { return };
                             if it.mask & LVIF_TEXT != 0 && it.cchTextMax > 0 {
-                                let s = if r.hdr { if it.iSubItem == 0 { r.name[1..].to_string() } else { String::new() } } else { match it.iSubItem { 0 => shown_name(&r.name, desk()), 1 => date_text(r.time), 2 => type_text(&r.name, r.dir), _ if r.dir => String::new(), _ => size_text(r.size) } };
+                                let s = if r.hdr { if it.iSubItem == 0 { r.name[1..].to_string() } else { String::new() } } else { match it.iSubItem { 0 => shown_name(&r.name, desk()), 1 => date_text(r.time), 2 => type_text(&r.name, r.dir), _ if r.dir && r.size == 0 => String::new(), _ => size_text(r.size) } };
                                 let u: Vec<u16> = s.encode_utf16().take(it.cchTextMax as usize - 1).collect();
                                 ptr::copy_nonoverlapping(u.as_ptr(), it.pszText, u.len());
                                 *it.pszText.add(u.len()) = 0;
@@ -1830,10 +1903,27 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                             }
                         });
                     }
+                    LVN_ODFINDITEMW if nm.hwndFrom == list => {
+                        // typing a name in the list selects the matching row (#130); -1 = no match, the selection stays
+                        let f = &*(lp as *const NMLVFINDITEMW);
+                        if f.lvfi.flags & LVFI_STRING == 0 || f.lvfi.psz.is_null() { return -1; }
+                        let mut n = 0;
+                        while *f.lvfi.psz.add(n) != 0 { n += 1; }
+                        let typed = String::from_utf16_lossy(std::slice::from_raw_parts(f.lvfi.psz, n));
+                        let start = usize::try_from(f.iStart).unwrap_or(0);
+                        let hit = ST.with(|c| c.try_borrow().ok().and_then(|st| {
+                            find_row(st.rows.len(), start, &typed, |i| st.rows.get(i).filter(|r| !r.hdr).map(|r| shown_name(&r.name, desk())))
+                        }));
+                        return hit.map_or(-1, |i| i as LRESULT);
+                    }
                     LVN_ITEMACTIVATE => {
                         let i = (*(lp as *const NMITEMACTIVATE)).iItem;
                         let hit = ST.with_borrow(|st| usize::try_from(i).ok().and_then(|i| st.rows.get(i)).filter(|r| !r.hdr).map(|r| (st.dir.join(&r.name), r.dir)));
                         if let Some((p, is_dir)) = hit { activate(h, p, is_dir); }
+                    }
+                    // a double click on empty space goes up one folder, like QTTabBar (#139); not on the desktop
+                    NM_DBLCLK if nm.hwndFrom == list && !desk() && (*(lp as *const NMITEMACTIVATE)).iItem < 0 => {
+                        PostMessageW(h, WM_NAV, 4, 0);
                     }
                     NM_RCLICK if nm.hwndFrom == list => {
                         let (_, dir, paths) = selected();
@@ -1904,7 +1994,7 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                                 return 0;
                             }
                             0x56 if ctrl => paste(h, &dir),
-                            0x4E if ctrl => new_entry(&dir, "New folder", true),
+                            0x4E if ctrl => new_entry(&dir, t!("Новая папка", "New folder", ja: "新しいフォルダー", pt: "Nova pasta", zh: "新建文件夹"), true),
                             0x48 if ctrl => { SHOW_HIDDEN.fetch_xor(true, Relaxed); } // Ctrl+H: hidden files
                             0x74 => {} // F5: just the reload below
                             0x4D if ctrl => { toggle_view(h); return 0; } // Ctrl+M: details <-> thumbnails
@@ -1959,6 +2049,14 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                 }
                 0
             }
+            WM_DIRSIZE => {
+                let (era, name, n) = *Box::from_raw(wp as *mut (u32, String, u64));
+                if era == GEN.load(Relaxed) {
+                    let (list, row) = ST.with_borrow_mut(|st| (st.list, st.rows.iter_mut().position(|r| r.dir && r.name == name).inspect(|&i| st.rows[i].size = n)));
+                    if let Some(i) = row { put(list, LVM_REDRAWITEMS, i, i as isize); }
+                }
+                0
+            }
             WM_THUMB => {
                 let (era, row, bmp) = *Box::from_raw(wp as *mut (u32, usize, isize));
                 let (list, himl) = ST.with_borrow(|st| (st.list, st.himl));
@@ -1986,8 +2084,9 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                 SetFocus(list);
                 0
             }
-            // icons hidden: the list is not shown, so the click lands on the desktop itself; the menu must still open
-            WM_CONTEXTMENU if desk() && icons_hidden() => { bg_menu(h); 0 }
+            // a click on the desktop itself, not on the icon list (which has its own NM_RCLICK menu): icons hidden, or
+            // a secondary monitor, where the list does not reach (#125)
+            WM_CONTEXTMENU if desk() && (icons_hidden() || wp as HWND == h) => { bg_menu(h); 0 }
             desk::SPAWN_WORKERW if desk() => { desk::spawn_workerw(h); 0 }
             WM_TIMER if desk() && wp == 7 => { desk::check_live(ST.with_borrow(|st| st.list)); 0 }
             WM_DESTROY => { if !desk() { save_place(h); } shellwin::revoke(); PostQuitMessage(0); 0 }
@@ -2092,6 +2191,22 @@ fn main() {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn typing_a_name_finds_the_row_not_the_first_one() {
+        let rows = [None, Some("Apps"), Some("Documentos"), Some("docs.txt"), None, Some("Música"), Some("zip")];
+        let at = |i: usize| rows[i].map(str::to_string);
+        let find = |start, typed| super::find_row(rows.len(), start, typed, at);
+        assert_eq!(find(0, "z"), Some(6)); // used to land on row 0
+        assert_eq!(find(0, "DOC"), Some(2)); // case is ignored
+        assert_eq!(find(3, "doc"), Some(3)); // the search starts at the given row ...
+        assert_eq!(find(4, "doc"), Some(2)); // ... and wraps round to the top
+        assert_eq!(find(0, "mú"), Some(5)); // accents are plain characters
+        assert_eq!(find(0, "x"), None); // no match: the selection stays
+        assert_eq!(find(0, ""), None);
+        assert_eq!(find(99, "a"), Some(1)); // a stale start row is clamped
+        assert_eq!(super::find_row(0, 0, "a", |_| None), None);
+    }
+
+    #[test]
     fn window_place_parses_and_rejects_junk() {
         let (max, r) = super::parse_place("max 10 20 1010 680").unwrap();
         assert!(max);
@@ -2190,10 +2305,10 @@ mod tests {
 
     #[test]
     fn type_and_size_read_like_explorers() {
-        // unit tests always see the Russian texts (lang!())
+        // the tests run in Russian (lang!() in a test build), like Explorer's own Type column
         assert_eq!(type_text("x", true), "Папка с файлами");
-        assert_eq!(type_text("a.txt", false), "Файл \"TXT\"");
-        assert_eq!(type_text("C:\\d\\b.tar.gz", false), "Файл \"GZ\"");
+        assert_eq!(type_text("a.txt", false), "Файл TXT");
+        assert_eq!(type_text("C:\\d\\b.tar.gz", false), "Файл GZ");
         assert_eq!(type_text(".gitignore", false), "Файл"); // a dot file has no extension
         assert_eq!(type_text("Makefile", false), "Файл");
         assert_eq!(size_text(1), "1 KB");

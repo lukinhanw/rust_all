@@ -11,7 +11,7 @@
   <a href="#community">Community</a>
 </p>
 
-<p align="center">English | <a href="README.ru.md">Русский</a> | <a href="README.ja.md">日本語</a> | <a href="README.pt-BR.md">Português (Brasil)</a></p>
+<p align="center">English | <a href="README.ru.md">Русский</a> | <a href="README.ja.md">日本語</a> | <a href="README.pt-BR.md">Português (Brasil)</a> | <a href="README.zh.md">简体中文</a></p>
 
 ![The WinRust bar with its settings menu, Ruby theme](docs/screenshots/taskbar.webp)
 
@@ -39,23 +39,24 @@
 
 1. Download `WinRust.exe` from the [latest release](https://github.com/Lemxy/WinRust/releases/latest) (Windows 10/11, x64).
 2. Run it as administrator.
-3. Tick the components you want and press the install button. On a fresh install, `rust-explorer` is unchecked. Tick it to replace the Windows Explorer shell (or use the gear on the topbar row: the **Shell: rust-explorer** switch). They are installed in the right order; one that fails or is skipped does not stop the others, the window lists what went wrong.
+3. Pick **Express (recommended)** and press **Install**: search, Task Manager, the bar, Settings, disk analysis and the photo viewer, nothing removed and Explorer left in place. Or pick **Custom (advanced)** to tick the components yourself, including `rust-explorer` (replaces the Windows Explorer shell; also the **Replace Explorer** switch behind the gear on the topbar row) and the extras. They are installed in the right order; one that fails or is skipped does not stop the others, and the last page lists each component with its result.
 
 Windows Search is optional: on a stripped Windows (for example a debloated LTSC image without the Windows Search service) that step is skipped with a warning instead of failing the install.
 
 If UAC asks for **another administrator's** password, the per-user settings (startup entries, scheduled tasks, PowerShell profile, search permissions) still go to the user who is signed in, not to the administrator you typed. If the installer cannot tell who that is, it stops before changing anything.
 
-**Automatic updates:** after the first install, a `WinRust-update` scheduled task (runs as SYSTEM, no UAC prompt) checks the latest release at boot and once a day. It downloads only the programs that changed, checks each file against a manifest signed with the project's key (a tampered or unsigned release is refused) and replaces only files that are already installed. A running program switches to the new version the next time it starts (sign-in or reboot). Log: `%ProgramData%\plugin-launcher\install.log` (`autoupdate:` lines). To turn it off, disable the `WinRust-update` task in Task Scheduler; **Remove all** deletes it.
+**Automatic updates:** after the first install, a `WinRust-update` scheduled task (runs as SYSTEM, no UAC prompt) checks the latest release at boot and once a day. It downloads the new `WinRust.exe` (and any program a release ships on its own), checks each file against a manifest signed with the project's key (a tampered or unsigned release is refused); the new `WinRust.exe` then replaces the installed programs that differ from the ones it carries. Only files that are already installed are replaced. A running program switches to the new version the next time it starts (sign-in or reboot). Log: `%ProgramData%\plugin-launcher\install.log` (`autoupdate:` lines). To turn it off, disable the `WinRust-update` task in Task Scheduler; **Remove WinRust** deletes it.
 
-**Manual update:** download the new `WinRust.exe` from the releases page, run it as administrator and select the components you want to update or install. An existing `rust-explorer` stays selected by default for updates. Your settings and the saved original Windows values stay.
+**Manual update:** download the new `WinRust.exe` from the releases page, run it as administrator and press **Update** on the Express card (it reinstalls what is installed and adds what is missing), or use Custom. An existing `rust-explorer` stays ticked. Your settings and the saved original Windows values stay.
 
-The installer is in English. The language button in its corner (or the gear on the bar → **Bar settings → Language**) switches every WinRust program to the chosen language: English, Русский, 日本語 or Português (Brasil). The choice is stored in `%ProgramData%\WinRust\lang.txt` (`en`, `ru`, `ja`, `pt`).
+The installer is in English. Its corner holds a language drop-down — English, Русский, 日本語, Português (Brasil), 简体中文; the same list sits behind the gear on the bar (**Bar settings → Language**), and rust-settings has it on its Personalization page (**Interface language**). The choice is stored in `%ProgramData%\WinRust\lang.txt` (`en`, `ru`, `ja`, `pt`, `zh`); the program you switch in repaints at once, the other programs read it when they start, so restart them (or sign out) after a change.
 
 ## Remove
 
-- **Remove all** in the installer window undoes everything: Windows Search, the taskbar, Explorer and the services come back.
+- **Remove WinRust** on the installer's first page undoes everything: Windows Search, the taskbar, Explorer and the services come back.
+- Without the installer (for example, antivirus deleted it): **Settings → Apps → Installed apps → WinRust → Uninstall** does the same as Remove WinRust.
 - One plugin at a time: `plugin-launcher uninstall <plugin>` (see [Command line](#command-line)).
-- **If the screen is left without a taskbar or desktop:** press Ctrl+Alt+Del → Task Manager → Run new task → `explorer.exe`, then run the installer and press Remove all.
+- **If the screen is left without a taskbar or desktop:** press Ctrl+Alt+Del → Task Manager → Run new task → `explorer.exe`, then run the installer and press Remove WinRust.
 
 On uninstall, `rust-explorer` restores the service startup values and the svchost grouping threshold saved before installation. Older installs without those backups keep their current values and report a warning.
 
@@ -117,7 +118,7 @@ In short: **64–99% faster or smaller in the size/speed tests, equal on idle CP
 
 ### Background load
 
-The programs that stay running, before and after the event-driven rework (branch `dev`, in the next release), on the same machine: CPU time used over 60 s of an idle desktop (the process's `TotalProcessorTime`), private memory and open handles. "Before" is the build that was installed just before the rework.
+The programs that stay running, before and after the event-driven rework of v0.5.7, on the same machine: CPU time used over 60 s of an idle desktop (the process's `TotalProcessorTime`), private memory and open handles. "Before" is the build that was installed just before the rework.
 
 | Program | Idle CPU before | Idle CPU after | Private memory before | after | Handles before | after |
 |---|---|---|---|---|---|---|
@@ -152,6 +153,9 @@ payload/        those exes once built (not in git)
 scripts/        build, update, release
 ```
 Everything is one cargo workspace (one `Cargo.lock`, every exe in `target\release`). `plugins/rust-search` and `plugins/chrome-rs` build separately because they need `panic = "unwind"` (see `Cargo.toml`).
+
+### Adding a language
+`t!("русский", "english", ja: "日本語", pt: "português", zh: "中文")` and `tf!(…)` return each text in the current language (without `ja:`/`pt:`/`zh:` those languages show the English one). The languages are the `Lang` enum in `common/src/lib.rs`.
 
 ### Build
 Needs Windows x64, Rust stable (1.85+) with the MSVC toolchain.

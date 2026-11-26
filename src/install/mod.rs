@@ -96,15 +96,15 @@ pub(crate) fn with_payload<T>(need: &[&str], f: impl FnOnce(&Path) -> Result<T, 
     fs::create_dir_all(&d).map_err(|e| format!("{}: {e}", d.display()))?;
     let disk = disk_payload();
     let unpack = |n: &&str| -> Result<(), String> {
-        let bytes = PAYLOAD.iter().find(|(m, _)| m == n).ok_or(tf!("нет {n} в сборке", "{n} is missing from the build", ja: "{n} がビルドに含まれていません", pt: "{n} não está na compilação"))?.1;
+        let bytes = PAYLOAD.iter().find(|(m, _)| m == n).ok_or(tf!("нет {n} в сборке", "{n} is missing from the build", ja: "{n} がビルドに含まれていません", pt: "{n} não está na compilação", zh: "构建中缺少 {n}"))?.1;
         match disk.as_ref().map(|p| p.join(n)).filter(|p| p.is_file()) {
             Some(src) => {
-                log(&tf!("{n}: из {}", "{n}: from {}", ja: "{n}: {} から", pt: "{n}: de {}", src.display()));
+                log(&tf!("{n}: из {}", "{n}: from {}", ja: "{n}: {} から", pt: "{n}: de {}", zh: "{n}：来自 {}", src.display()));
                 fs::copy(src, d.join(n)).map(|_| ())
             }
             None => fs::write(d.join(n), bytes),
         }
-        .map_err(|e| tf!("распаковка {n}: {e}", "unpacking {n}: {e}", ja: "{n} を展開中: {e}", pt: "descompactando {n}: {e}"))
+        .map_err(|e| tf!("распаковка {n}: {e}", "unpacking {n}: {e}", ja: "{n} を展開中: {e}", pt: "descompactando {n}: {e}", zh: "正在解压 {n}：{e}"))
     };
     let r = need.iter().try_for_each(unpack).and_then(|_| f(&d));
     let _ = fs::remove_dir_all(&d);
@@ -144,41 +144,41 @@ pub(crate) fn checkpoint() -> Result<(), String> {
 // Shared by the window and the command line, so both do exactly the same thing.
 pub(crate) fn install_plugin(i: usize) -> Result<String, String> {
     let p = &PLUGINS[i];
-    let (inst, uninst) = p.actions.ok_or(t!("установка недоступна", "installation is not available", ja: "インストールは利用できません", pt: "a instalação não está disponível"))?;
-    init().inspect_err(|e| log(&tf!("{}: ОШИБКА {e}", "{}: ERROR {e}", ja: "{}: エラー {e}", pt: "{}: ERRO {e}", p.name)))?; // before anything is written: no user, no install
+    let (inst, uninst) = p.actions.ok_or(t!("установка недоступна", "installation is not available", ja: "インストールは利用できません", pt: "a instalação não está disponível", zh: "安装不可用"))?;
+    init().inspect_err(|e| log(&tf!("{}: ОШИБКА {e}", "{}: ERROR {e}", ja: "{}: エラー {e}", pt: "{}: ERRO {e}", zh: "{}：错误 {e}", p.name)))?; // before anything is written: no user, no install
     let was = (p.installed)(); // already installed = an update: a failure must not remove the working copy
     WARN.lock().unwrap().clear();
-    soft(t!("точка восстановления не создана", "restore point was not created", ja: "復元ポイントを作成できませんでした", pt: "o ponto de restauração não foi criado"), checkpoint());
+    soft(t!("точка восстановления не создана", "restore point was not created", ja: "復元ポイントを作成できませんでした", pt: "o ponto de restauração não foi criado", zh: "未创建还原点"), checkpoint());
     if let Err(e) = inst() {
-        log(&tf!("{}: ОШИБКА {e}", "{}: ERROR {e}", ja: "{}: エラー {e}", pt: "{}: ERRO {e}", p.name));
+        log(&tf!("{}: ОШИБКА {e}", "{}: ERROR {e}", ja: "{}: エラー {e}", pt: "{}: ERRO {e}", zh: "{}：错误 {e}", p.name));
         if was {
             return Err(e);
         }
         let rollback = match uninst() {
-            Ok(()) => t!("автоматический откат завершён", "automatic rollback completed", ja: "自動ロールバックが完了しました", pt: "reversão automática concluída").to_string(),
-            Err(u) => tf!("ошибка автоматического отката: {u}", "automatic rollback failed: {u}", ja: "自動ロールバックに失敗しました: {u}", pt: "a reversão automática falhou: {u}"),
+            Ok(()) => t!("автоматический откат завершён", "automatic rollback completed", ja: "自動ロールバックが完了しました", pt: "reversão automática concluída", zh: "自动回滚已完成").to_string(),
+            Err(u) => tf!("ошибка автоматического отката: {u}", "automatic rollback failed: {u}", ja: "自動ロールバックに失敗しました: {u}", pt: "a reversão automática falhou: {u}", zh: "自动回滚失败：{u}"),
         };
         log(&format!("{}: {rollback}", p.name));
         return Err(format!("{e} ({rollback})"));
     }
     updater_sync(); // first install: the WinRust-update task appears (a failure is a warning)
     let w = WARN.lock().unwrap().clone();
-    log(&format!("{}: {} {}", p.name, if was { t!("обновлён", "updated", ja: "更新済み", pt: "atualizado") } else { t!("установлен", "installed", ja: "インストール済み", pt: "instalado") }, w.join(" | ")));
-    let note = if w.is_empty() { String::new() } else { tf!(" Предупреждений: {} (см. %ProgramData%\\plugin-launcher\\install.log).", " Warnings: {} (see %ProgramData%\\plugin-launcher\\install.log).", ja: " 警告: {} 件 (%ProgramData%\\plugin-launcher\\install.log を参照)。", pt: " Avisos: {} (veja %ProgramData%\\plugin-launcher\\install.log).", w.len()) };
-    Ok(format!("{} {}.{note}", p.name, if was { t!("обновлён", "updated", ja: "更新済み", pt: "atualizado") } else { t!("установлен", "installed", ja: "インストール済み", pt: "instalado") }))
+    log(&format!("{}: {} {}", p.name, if was { t!("обновлён", "updated", ja: "更新済み", pt: "atualizado", zh: "已更新") } else { t!("установлен", "installed", ja: "インストール済み", pt: "instalado", zh: "已安装") }, w.join(" | ")));
+    let note = if w.is_empty() { String::new() } else { tf!(" Предупреждений: {} (см. %ProgramData%\\plugin-launcher\\install.log).", " Warnings: {} (see %ProgramData%\\plugin-launcher\\install.log).", ja: " 警告: {} 件 (%ProgramData%\\plugin-launcher\\install.log を参照)。", pt: " Avisos: {} (veja %ProgramData%\\plugin-launcher\\install.log).", zh: " 警告：{}（见 %ProgramData%\\plugin-launcher\\install.log）。", w.len()) };
+    Ok(format!("{} {}.{note}", p.name, if was { t!("обновлён", "updated", ja: "更新済み", pt: "atualizado", zh: "已更新") } else { t!("установлен", "installed", ja: "インストール済み", pt: "instalado", zh: "已安装") }))
 }
 
 pub(crate) fn uninstall_plugin(i: usize) -> Result<String, String> {
     let p = &PLUGINS[i];
-    let (_, uninst) = p.actions.ok_or(t!("удаление недоступно", "uninstall is not available", ja: "アンインストールは利用できません", pt: "a desinstalação não está disponível"))?;
+    let (_, uninst) = p.actions.ok_or(t!("удаление недоступно", "uninstall is not available", ja: "アンインストールは利用できません", pt: "a desinstalação não está disponível", zh: "卸载不可用"))?;
     WARN.lock().unwrap().clear();
     init_soft();
-    uninst().inspect_err(|e| log(&tf!("{}: ОШИБКА удаления {e}", "{}: uninstall ERROR {e}", ja: "{}: アンインストール エラー {e}", pt: "{}: ERRO ao desinstalar {e}", p.name)))?;
+    uninst().inspect_err(|e| log(&tf!("{}: ОШИБКА удаления {e}", "{}: uninstall ERROR {e}", ja: "{}: アンインストール エラー {e}", pt: "{}: ERRO ao desinstalar {e}", zh: "{}：卸载错误 {e}", p.name)))?;
     updater_sync();
     let w = WARN.lock().unwrap().clone();
-    log(&format!("{}: {} {}", p.name, t!("удалён", "removed", ja: "削除済み", pt: "removido"), w.join(" | ")));
-    let note = if w.is_empty() { String::new() } else { tf!(" Предупреждений: {} (см. %ProgramData%\\plugin-launcher\\install.log).", " Warnings: {} (see %ProgramData%\\plugin-launcher\\install.log).", ja: " 警告: {} 件 (%ProgramData%\\plugin-launcher\\install.log を参照)。", pt: " Avisos: {} (veja %ProgramData%\\plugin-launcher\\install.log).", w.len()) };
-    Ok(tf!("{} удалён.{note}", "{} removed.{note}", ja: "{} を削除しました。{note}", pt: "{} removido.{note}", p.name))
+    log(&format!("{}: {} {}", p.name, t!("удалён", "removed", ja: "削除済み", pt: "removido", zh: "已移除"), w.join(" | ")));
+    let note = if w.is_empty() { String::new() } else { tf!(" Предупреждений: {} (см. %ProgramData%\\plugin-launcher\\install.log).", " Warnings: {} (see %ProgramData%\\plugin-launcher\\install.log).", ja: " 警告: {} 件 (%ProgramData%\\plugin-launcher\\install.log を参照)。", pt: " Avisos: {} (veja %ProgramData%\\plugin-launcher\\install.log).", zh: " 警告：{}（见 %ProgramData%\\plugin-launcher\\install.log）。", w.len()) };
+    Ok(tf!("{} удалён.{note}", "{} removed.{note}", ja: "{} を削除しました。{note}", pt: "{} removido.{note}", zh: "{} 已移除。{note}", p.name))
 }
 
 pub(crate) fn rollback() -> Result<String, String> {
@@ -190,10 +190,10 @@ pub(crate) fn rollback() -> Result<String, String> {
     let warnings = WARN.lock().unwrap().join(" | ");
     let note = if warnings.is_empty() { "" } else {
         log(&format!("rollback: {warnings}"));
-        t!(" Есть предупреждения (см. %ProgramData%\\plugin-launcher\\install.log).", " See warnings in %ProgramData%\\plugin-launcher\\install.log.", ja: " 警告は %ProgramData%\\plugin-launcher\\install.log を参照してください。", pt: " Veja os avisos em %ProgramData%\\plugin-launcher\\install.log.")
+        t!(" Есть предупреждения (см. %ProgramData%\\plugin-launcher\\install.log).", " See warnings in %ProgramData%\\plugin-launcher\\install.log.", ja: " 警告は %ProgramData%\\plugin-launcher\\install.log を参照してください。", pt: " Veja os avisos em %ProgramData%\\plugin-launcher\\install.log.", zh: " 警告请见 %ProgramData%\\plugin-launcher\\install.log。")
     };
     if errs.is_empty() {
-        Ok(tf!("Все плагины удалены.{note}", "All plugins removed.{note}", ja: "すべてのプラグインを削除しました。{note}", pt: "Todos os plugins foram removidos.{note}"))
+        Ok(tf!("Все плагины удалены.{note}", "All plugins removed.{note}", ja: "すべてのプラグインを削除しました。{note}", pt: "Todos os plugins foram removidos.{note}", zh: "所有插件已移除。{note}"))
     } else {
         Err(format!("{}{note}", errs.join("; ")))
     }

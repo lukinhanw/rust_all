@@ -6,6 +6,12 @@ pub(crate) fn selected_by_default(name: &str, installed: bool) -> bool {
     name != RUST_EXPLORER || installed
 }
 
+/// The "Express" choice of the window: the recommended components (not the Explorer replacement, never the extras), and
+/// everything already installed stays (express never removes anything).
+pub(crate) fn express_pick(name: &str, bulk: bool, installed: bool) -> bool {
+    installed || (bulk && selected_by_default(name, false))
+}
+
 /// What the window's button does with the switches: (to remove, to install). A switch says "I want this installed", so
 /// only the difference is touched. `rows` is in install order; removal runs backwards (rust-explorer before topbar).
 pub(crate) fn plan(rows: &[usize], installed: impl Fn(usize) -> bool, wanted: impl Fn(usize) -> bool) -> (Vec<usize>, Vec<usize>) {
@@ -49,6 +55,15 @@ mod tests {
         assert!(!selected_by_default(RUST_EXPLORER, false));
         assert!(selected_by_default("topbar", false));
         assert!(selected_by_default("rust-search", false));
+    }
+
+    #[test]
+    fn express_installs_the_safe_set_and_keeps_what_is_there() {
+        assert!(express_pick("topbar", true, false));
+        assert!(!express_pick(RUST_EXPLORER, true, false), "Explorer is replaced only on request");
+        assert!(express_pick(RUST_EXPLORER, true, true), "an installed one is not removed");
+        assert!(!express_pick("purge", false, false) && !express_pick("debloat", false, false), "extras never by default");
+        assert!(express_pick("debloat", false, true));
     }
 
     #[test]

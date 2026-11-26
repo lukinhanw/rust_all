@@ -61,7 +61,7 @@ pub(crate) fn bar_install() -> Result<(), String> {
         } else {
             run("reg", &["add", RUN_KEY, "/v", "reshell", "/t", "REG_SZ", "/d", &format!("\"{}\"", rsh.display()), "/f"])?; // fallback
         }
-        let _ = Command::new("explorer.exe").arg(&rsh).spawn();
+        let _ = winrust_common::launch::program(&rsh.to_string_lossy());
         run(dst.to_str().unwrap(), &["--restore"])?; // clean state in case a killed instance left the taskbar hidden
         // The bar runs elevated (a task with the highest run level starts it at logon without a UAC prompt): that lets it close
         // elevated windows and click elevated apps' tray icons. It starts everything else through explorer, i.e. unelevated.
@@ -70,11 +70,11 @@ pub(crate) fn bar_install() -> Result<(), String> {
         if run("powershell", &["-NoProfile", "-Command", &task]).is_ok() && run("schtasks", &["/run", "/tn", "topbar"]).is_ok() {
             let _ = run("reg", &["delete", RUN_KEY, "/v", "topbar", "/f"]);
         } else {
-            WARN.lock().unwrap().push(t!("задача topbar не создана: запуск через Run, без прав администратора", "topbar task was not created: it starts via Run, without administrator rights", ja: "topbar タスクを作成できませんでした: 管理者権限なしで Run 経由で起動します", pt: "a tarefa topbar não foi criada: ela inicia pelo Run, sem direitos de administrador").into());
+            WARN.lock().unwrap().push(t!("задача topbar не создана: запуск через Run, без прав администратора", "topbar task was not created: it starts via Run, without administrator rights", ja: "topbar タスクを作成できませんでした: 管理者権限なしで Run 経由で起動します", pt: "a tarefa topbar não foi criada: ela inicia pelo Run, sem direitos de administrador", zh: "topbar 计划任务未创建：它将通过 Run 启动，没有管理员权限").into());
             run("reg", &["add", RUN_KEY, "/v", "topbar", "/t", "REG_SZ", "/d", &format!("\"{}\"", dst.display()), "/f"])?;
-            let _ = Command::new("explorer.exe").arg(&dst).spawn(); // normal user token, like rs-launcher
+            let _ = winrust_common::launch::program(&dst.to_string_lossy()); // normal user token, like rs-launcher
         }
-        soft(t!("профиль PowerShell не записан", "PowerShell profile was not written", ja: "PowerShell プロファイルを書き込めませんでした", pt: "o perfil do PowerShell não foi gravado"), profile_install()); // a shell nicety, must not fail the bar install
+        soft(t!("профиль PowerShell не записан", "PowerShell profile was not written", ja: "PowerShell プロファイルを書き込めませんでした", pt: "o perfil do PowerShell não foi gravado", zh: "PowerShell 配置文件未写入"), profile_install()); // a shell nicety, must not fail the bar install
         Ok(())
     })
 }

@@ -1,9 +1,9 @@
 # Publishes a GitHub release with a fresh WinRust.exe.
 #   release.ps1 v0.2.0 [-Notes "text"]
 # Rebuilds everything (build-all.ps1), pushes pending changes, tags, uploads the exe.
-# For the auto-updater (src/update) it also uploads every plugin exe plus manifest.txt and manifest.sig, signed with the
+# For the auto-updater (src/update) it also uploads manifest.txt and manifest.sig, signed with the
 # private key in %USERPROFILE%\.winrust\update-signing.key (tools/winrust-sign). Without that key the release stops.
-param([Parameter(Mandatory)][string]$Version, [string]$Notes, [switch]$OnlyInstaller)
+param([Parameter(Mandatory)][string]$Version, [string]$Notes)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 Set-Location $root
@@ -23,12 +23,7 @@ Copy-Item "$root\target\release\plugin-launcher.exe" $exe -Force
 $sha = { param($p) (Get-FileHash $p -Algorithm SHA256).Hash.ToLower() }
 # manifest names are the payload.txt names; the asset gets dots for spaces (GitHub would rename it that way anyway)
 $lines = @('winrust-manifest 1', "version $Version", "$(& $sha $exe) WinRust.exe")
-# -OnlyInstaller: the manifest lists WinRust.exe alone (the plugins ride inside it), so the "update available" link and the
-# auto-updater still see the release without the plugin exes attached
-foreach ($f in $(if ($OnlyInstaller) { @() } else { Get-ChildItem "$root\payload\*.exe" })) {
-    Copy-Item $f.FullName (Join-Path $dir ($f.Name -replace ' ', '.')) -Force
-    $lines += "$(& $sha $f.FullName) $($f.Name)"
-}
+# only WinRust.exe is attached (the plugins ride inside it); the manifest lists it alone, which the auto-updater accepts
 $manifest = Join-Path $dir 'manifest.txt'
 [IO.File]::WriteAllText($manifest, ($lines -join "`n") + "`n", (New-Object Text.UTF8Encoding $false))
 & "$root\target\release\winrust-sign.exe" sign $manifest (Join-Path $dir 'manifest.sig')

@@ -68,9 +68,25 @@ pub(crate) fn card_at(rects: &[RECT], x: i32, y: i32) -> Option<usize> {
     rects.iter().position(|r| x >= r.left && x < r.right && y >= r.top && y < r.bottom)
 }
 
+thread_local! {
+    // Each popup owns copies of its icons until it is relaid out or closed.
+    static CARD_ICONS: RefCell<HashMap<usize, Vec<HICON>>> = RefCell::new(HashMap::new());
+}
+
+unsafe fn load_card_icon(w: HWND) -> HICON {
+    let exe = exe_of(w);
+    // Generic hosts represent many unrelated applications; preserve the window's icon.
+    let shell_icon = if exe.is_empty() || is_host(&exe) { null_mut() } else { item_icon(&exe, sc(48)) };
+    if !shell_icon.is_null() { return shell_icon; }
+    let window_icon = icon_of(w);
+    if window_icon.is_null() { null_mut() } else { CopyIcon(window_icon) }
+}
+
 /// Live previews of `wins` drawn by DWM into `host` over the cards. 0 where there is none (minimized windows show
 /// nothing in DWM: their card keeps the big icon painted underneath).
 pub(crate) unsafe fn register(host: HWND, wins: &[HWND], rects: &[RECT]) -> Vec<isize> {
+    let icons = wins.iter().map(|&w| load_card_icon(w)).collect();
+    CARD_ICONS.with_borrow_mut(|all| { all.insert(host as usize, icons); });
     wins.iter().zip(rects).map(|(&w, r)| {
         let mut id = 0isize;
         if IsIconic(w) != 0 || DwmRegisterThumbnail(host, w, &mut id) != 0 {
@@ -96,7 +112,10 @@ pub(crate) unsafe fn register(host: HWND, wins: &[HWND], rects: &[RECT]) -> Vec<
     }).collect()
 }
 
-pub(crate) unsafe fn unregister(ids: &mut Vec<isize>) {
+pub(crate) unsafe fn unregister(host: HWND, ids: &mut Vec<isize>) {
+    if let Some(icons) = CARD_ICONS.with_borrow_mut(|all| all.remove(&(host as usize))) {
+        for icon in icons { if !icon.is_null() { DestroyIcon(icon); } }
+    }
     ids.drain(..).filter(|&id| id != 0).for_each(|id| {
         DwmUnregisterThumbnail(id);
     });
@@ -122,7 +141,7 @@ pub(crate) unsafe fn paint(host: HWND, wins: &[HWND], rects: &[RECT], ids: &[isi
             fill(mem, *c, pal().accent, sc(12));
         }
         fill(mem, RECT { left: c.left + sc(2), top: c.top + sc(2), right: c.right - sc(2), bottom: c.bottom - sc(2) }, if on { pal().active } else { pal().hover }, sc(10));
-        let ic = icon_of(w);
+        let ic = CARD_ICONS.with_borrow(|all| all.get(&(host as usize)).and_then(|icons| icons.get(k)).copied().unwrap_or(null_mut()));
         let ic = if ic.is_null() { LoadIconW(null_mut(), IDI_APPLICATION) } else { ic };
         let t = sc(TITLE);
         DrawIconEx(mem, c.left + sc(8), c.top + (t - sc(16)) / 2, ic, sc(16), sc(16), 0, null_mut(), DI_NORMAL);
@@ -188,7 +207,7 @@ unsafe fn layout(pv: HWND, wins: Vec<HWND>, cx: i32) {
     let (w, h) = (tw + 2 * pad, th + 2 * pad);
     let old = PV.take();
     let mut ids = old.2;
-    unregister(&mut ids);
+    unregister(pv, &mut ids);
     SetWindowRgn(pv, CreateRoundRectRgn(0, 0, w + 1, h + 1, rr(18), rr(18)), 1);
     if vert() {
         let y = (cx - h / 2).clamp(sc(4), sch - h - sc(4));
@@ -217,7 +236,7 @@ pub(crate) unsafe fn hide_preview() {
     KillTimer(pv, 1);
     ShowWindow(pv, SW_HIDE);
     let (_, _, mut ids, _) = PV.take();
-    unregister(&mut ids);
+    unregister(pv, &mut ids);
     PV_BTN.set(NONE);
 }
 
@@ -304,6 +323,21 @@ mod tests {
         assert!(l.right <= r.left && r.right <= c.left, "{} {} {} {}", l.right, r.left, r.right, c.left);
         assert!(l.left > 30, "the title keeps room after the icon");
         assert_eq!((l.top, r.bottom), (c.top, c.bottom));
+    }
+
+    #[test]
+    fn closing_a_popup_releases_its_icon_copies() {
+        unsafe {
+            use super::*;
+            let host = 1usize as HWND;
+            let icon = CopyIcon(LoadIconW(null_mut(), IDI_APPLICATION));
+            assert!(!icon.is_null());
+            CARD_ICONS.with_borrow_mut(|all| { all.insert(host as usize, vec![icon]); });
+            unregister(host, &mut Vec::new());
+            assert!(CARD_ICONS.with_borrow(|all| !all.contains_key(&(host as usize))));
+            let mut info: ICONINFO = zeroed();
+            assert_eq!(GetIconInfo(icon, &mut info), 0);
+        }
     }
 
     #[test]

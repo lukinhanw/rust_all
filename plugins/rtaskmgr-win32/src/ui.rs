@@ -333,7 +333,7 @@ pub fn heat(th: &Theme, value: f64, scale: f64) -> Rgb {
 /// Человекочитаемые единицы.
 pub fn fmt_mem(bytes: u64) -> String {
     let mb = bytes as f64 / 1_048_576.0;
-    if mb >= 1000.0 { tf!("{} МБ", "{} MB", ja: "{} MB", pt: "{} MB", group_thousands(mb as u64)) } else if mb >= 100.0 { tf!("{:.0} МБ", "{:.0} MB", ja: "{:.0} MB", pt: "{:.0} MB", mb) } else { tf!("{:.1} МБ", "{:.1} MB", ja: "{:.1} MB", pt: "{:.1} MB", mb) }
+    if mb >= 1000.0 { tf!("{} МБ", "{} MB", ja: "{} MB", pt: "{} MB", zh: "{} MB", group_thousands(mb as u64)) } else if mb >= 100.0 { tf!("{:.0} МБ", "{:.0} MB", ja: "{:.0} MB", pt: "{:.0} MB", zh: "{:.0} MB", mb) } else { tf!("{:.1} МБ", "{:.1} MB", ja: "{:.1} MB", pt: "{:.1} MB", zh: "{:.1} MB", mb) }
 }
 
 pub fn group_thousands(n: u64) -> String {

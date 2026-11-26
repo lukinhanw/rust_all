@@ -3,6 +3,7 @@
 // Click a folder: go in. Right click / Backspace: up. Click a file: show it in Explorer. Tab: next drive. F5: rescan. Esc: quit.
 // Needs admin (raw volume); starts itself elevated (UAC) when it is not.
 // shortcuts: one level of the tree at a time, the 300 biggest items; a folder's own index size is not counted (see common/src/mft.rs).
+use winrust_common::{t, tf};
 use winrust_common::mft::*;
 use std::{cell::RefCell, collections::HashMap, ptr::{null, null_mut}};
 use windows_sys::Win32::{
@@ -130,7 +131,7 @@ fn fixed_drives() -> Vec<char> {
 fn rescan(hwnd: HWND, drive: char) {
     APP.with_borrow_mut(|a| {
         (a.tree, a.drive, a.cur, a.hot, a.cells) = (None, drive, ROOT, None, vec![]);
-        a.status = format!("Reading the MFT of {drive}: ...");
+        a.status = tf!("Чтение MFT диска {drive}: ...", "Reading the MFT of {drive}: ...", ja: "ドライブ {drive}: の MFT を読み込んでいます...", pt: "Lendo a MFT de {drive}: ...", zh: "正在读取 {drive}: 的 MFT…");
     });
     unsafe { InvalidateRect(hwnd, null(), 0) };
     let h = hwnd as isize;
@@ -195,7 +196,7 @@ unsafe fn paint(hwnd: HWND) {
                 head = format!("{head}    {}", human(size));
                 foot = match a.hot.and_then(|n| a.cells.get(n)) {
                     Some((_, id)) => format!("{}    {}", path_of(&t.recs, *id, a.drive).0, human(t.tot[id])),
-                    None => "Click: open folder / show file    Right click, Backspace: up    Tab: next drive    F5: rescan".into(),
+                    None => t!("Щелчок: открыть папку / показать файл    ПКМ, Backspace: вверх    Tab: следующий диск    F5: обновить", "Click: open folder / show file    Right click, Backspace: up    Tab: next drive    F5: rescan", ja: "クリック: フォルダーを開く / ファイルを表示    右クリック、Backspace: 上へ    Tab: 次のドライブ    F5: 再スキャン", pt: "Clique: abrir pasta / mostrar arquivo    Botão direito, Backspace: subir    Tab: próxima unidade    F5: examinar de novo", zh: "单击：打开文件夹 / 定位文件    右键、Backspace：上一层    Tab：下一个磁盘    F5：重新扫描").into(),
                 };
             }
             text(&head, RECT { left: (12.0 * k) as i32, top: 0, right: w - 12, bottom: top }, ACCENT, one);

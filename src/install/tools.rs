@@ -31,7 +31,7 @@ pub(crate) fn tool_install(exe: &str, dir: &Path, lnk: Option<&str>) -> Result<(
         let dst = dir.join(exe);
         put(&d.join(exe), &dst)?;
         if let Some(n) = lnk {
-            soft(&tf!("ярлык «{n}» в меню Пуск не создан, поиск его не увидит", "Start menu shortcut '{n}' was not created, search will not find it", ja: "スタート メニューのショートカット '{n}' を作成できませんでした。検索で見つかりません", pt: "O atalho '{n}' do menu Iniciar não foi criado; a pesquisa não o encontrará"), shortcut(&start_lnk(n), &dst, ""));
+            soft(&tf!("ярлык «{n}» в меню Пуск не создан, поиск его не увидит", "Start menu shortcut '{n}' was not created, search will not find it", ja: "スタート メニューのショートカット '{n}' を作成できませんでした。検索で見つかりません", pt: "O atalho '{n}' do menu Iniciar não foi criado; a pesquisa não o encontrará", zh: "开始菜单快捷方式「{n}」未创建，搜索将找不到它"), shortcut(&start_lnk(n), &dst, ""));
         }
         Ok(())
     })

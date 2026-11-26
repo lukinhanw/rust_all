@@ -24,6 +24,7 @@ pub struct Settings {
     pub pos: (i32, i32),
     pub size: (u32, u32),
     pub to_tray: bool,
+    pub tray_asked: bool, // the first close asked "tray or quit?"; until then closing quits, like the stock one
     pub theme: u8, // 0 светлая, 1 тёмная, 2 как в системе
     pub etw: bool, // сеть по процессам (нужен администратор), по умолчанию выключено
     pub gpu_temp_always: bool, // читать температуру GPU и вне страницы GPU (может будить видеокарту ноутбука)
@@ -32,7 +33,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { view: 0, sort: 2, desc: true, pos: (150, 60), size: (1000, 740), to_tray: true, theme: 2, etw: false, gpu_temp_always: false, rules: vec![] }
+        Self { view: 0, sort: 2, desc: true, pos: (150, 60), size: (1000, 740), to_tray: false, tray_asked: false, theme: 2, etw: false, gpu_temp_always: false, rules: vec![] }
     }
 }
 
@@ -43,8 +44,8 @@ pub fn dir() -> PathBuf {
 
 pub fn render(s: &Settings) -> String {
     let mut t = format!(
-        "view={}\npsort={}\ndesc={}\nx={}\ny={}\nw={}\nh={}\nto_tray={}\ntheme={}\netw={}\ngputemp={}\n",
-        s.view, s.sort, s.desc as u8, s.pos.0, s.pos.1, s.size.0, s.size.1, s.to_tray as u8, s.theme, s.etw as u8, s.gpu_temp_always as u8
+        "view={}\npsort={}\ndesc={}\nx={}\ny={}\nw={}\nh={}\nto_tray={}\ntray_asked={}\ntheme={}\netw={}\ngputemp={}\n",
+        s.view, s.sort, s.desc as u8, s.pos.0, s.pos.1, s.size.0, s.size.1, s.to_tray as u8, s.tray_asked as u8, s.theme, s.etw as u8, s.gpu_temp_always as u8
     );
     for r in &s.rules {
         t += &format!("rule={}|{}|{}|{}|{}\n", r.proc, r.cpu, r.secs, if r.act == RuleAct::Lower { "lower" } else { "notify" }, r.hits);
@@ -65,6 +66,7 @@ pub fn parse(text: &str) -> Settings {
             "w" => s.size.0 = v.parse().unwrap_or(s.size.0),
             "h" => s.size.1 = v.parse().unwrap_or(s.size.1),
             "to_tray" => s.to_tray = v == "1",
+            "tray_asked" => s.tray_asked = v == "1",
             "theme" => s.theme = v.parse().unwrap_or(2).min(2),
             "etw" => s.etw = v == "1",
             "gputemp" => s.gpu_temp_always = v == "1",
@@ -139,6 +141,8 @@ mod tests {
         s.etw = true;
         s.gpu_temp_always = true;
         s.desc = false;
+        s.to_tray = true;
+        s.tray_asked = true;
         s.rules.push(Rule { proc: "chrome.exe".into(), cpu: 50.0, secs: 60, act: RuleAct::Lower, hits: 2 });
         assert_eq!(parse(&render(&s)), s);
     }

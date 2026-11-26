@@ -68,65 +68,65 @@ pub fn remember(line: &str) {
     }
 }
 
-/// Commands people type into Run, with what they open (Russian, English, Japanese, Portuguese). The first POPULAR ones fill an empty
+/// Commands people type into Run, with what they open (Russian, English, Japanese, Portuguese, Chinese). The first POPULAR ones fill an empty
 /// history. A description match finds them too: "реестр" or "registry" → regedit.
-pub const KNOWN: &[(&str, &str, &str, &str, &str)] = &[
-    ("cmd", "Командная строка", "Command Prompt", "コマンド プロンプト", "Prompt de Comando"),
-    ("powershell", "Windows PowerShell", "Windows PowerShell", "Windows PowerShell", "Windows PowerShell"),
-    ("regedit", "Редактор реестра", "Registry Editor", "レジストリ エディター", "Editor do Registro"),
-    ("taskmgr", "Диспетчер задач", "Task Manager", "タスク マネージャー", "Gerenciador de Tarefas"),
-    ("control", "Панель управления", "Control Panel", "コントロール パネル", "Painel de Controle"),
-    ("msconfig", "Конфигурация системы, загрузка", "System Configuration, boot", "システム構成、ブート", "Configuração do Sistema, inicialização"),
-    ("services.msc", "Службы", "Services", "サービス", "Serviços"),
-    ("devmgmt.msc", "Диспетчер устройств", "Device Manager", "デバイス マネージャー", "Gerenciador de Dispositivos"),
-    ("wt", "Терминал Windows", "Windows Terminal", "Windows ターミナル", "Terminal do Windows"),
-    ("notepad", "Блокнот", "Notepad", "メモ帳", "Bloco de Notas"),
-    ("calc", "Калькулятор", "Calculator", "電卓", "Calculadora"),
-    ("mspaint", "Paint, рисование", "Paint", "ペイント", "Paint"),
-    ("diskmgmt.msc", "Управление дисками, разделы", "Disk Management, partitions", "ディスクの管理、パーティション", "Gerenciamento de Disco, partições"),
-    ("compmgmt.msc", "Управление компьютером", "Computer Management", "コンピューターの管理", "Gerenciamento do Computador"),
-    ("eventvwr.msc", "Просмотр событий, журналы", "Event Viewer, logs", "イベント ビューアー、ログ", "Visualizador de Eventos, logs"),
-    ("gpedit.msc", "Редактор локальной групповой политики", "Local Group Policy Editor", "ローカル グループ ポリシー エディター", "Editor de Política de Grupo Local"),
-    ("taskschd.msc", "Планировщик заданий", "Task Scheduler", "タスク スケジューラ", "Agendador de Tarefas"),
-    ("lusrmgr.msc", "Локальные пользователи и группы", "Local Users and Groups", "ローカル ユーザーとグループ", "Usuários e Grupos Locais"),
-    ("perfmon", "Системный монитор, производительность", "Performance Monitor", "パフォーマンス モニター", "Monitor de Desempenho"),
-    ("resmon", "Монитор ресурсов", "Resource Monitor", "リソース モニター", "Monitor de Recursos"),
-    ("appwiz.cpl", "Программы и компоненты, удаление программ", "Programs and Features, uninstall", "プログラムと機能、アンインストール", "Programas e Recursos, desinstalar"),
-    ("optionalfeatures", "Компоненты Windows", "Windows Features", "Windows の機能", "Recursos do Windows"),
-    ("ncpa.cpl", "Сетевые подключения, адаптеры", "Network Connections, adapters", "ネットワーク接続、アダプター", "Conexões de Rede, adaptadores"),
-    ("sysdm.cpl", "Свойства системы, имя компьютера, переменные среды", "System Properties, computer name, environment variables", "システムのプロパティ、コンピューター名、環境変数", "Propriedades do Sistema, nome do computador, variáveis de ambiente"),
-    ("powercfg.cpl", "Электропитание", "Power Options", "電源オプション", "Opções de Energia"),
-    ("mmsys.cpl", "Звук, устройства воспроизведения", "Sound, playback devices", "サウンド、再生デバイス", "Som, dispositivos de reprodução"),
-    ("main.cpl", "Мышь", "Mouse", "マウス", "Mouse"),
-    ("desk.cpl", "Экран, разрешение", "Display, resolution", "ディスプレイ、解像度", "Vídeo, resolução"),
-    ("timedate.cpl", "Дата и время", "Date and Time", "日付と時刻", "Data e Hora"),
-    ("inetcpl.cpl", "Свойства браузера, прокси", "Internet Options, proxy", "インターネット オプション、プロキシ", "Opções da Internet, proxy"),
-    ("firewall.cpl", "Брандмауэр Защитника Windows", "Windows Defender Firewall", "Windows Defender ファイアウォール", "Firewall do Windows Defender"),
-    ("cleanmgr", "Очистка диска", "Disk Cleanup", "ディスク クリーンアップ", "Limpeza de Disco"),
-    ("dfrgui", "Оптимизация дисков, дефрагментация", "Optimize Drives, defragment", "ドライブの最適化、デフラグ", "Otimizar Unidades, desfragmentar"),
-    ("msinfo32", "Сведения о системе", "System Information", "システム情報", "Informações do Sistema"),
-    ("dxdiag", "Диагностика DirectX, видеокарта", "DirectX Diagnostic Tool, graphics", "DirectX 診断ツール、グラフィックス", "Ferramenta de Diagnóstico do DirectX, placa de vídeo"),
-    ("winver", "О программе Windows, версия", "About Windows, version", "Windows のバージョン情報", "Sobre o Windows, versão"),
-    ("mstsc", "Подключение к удалённому рабочему столу", "Remote Desktop Connection", "リモート デスクトップ接続", "Conexão de Área de Trabalho Remota"),
-    ("osk", "Экранная клавиатура", "On-Screen Keyboard", "スクリーン キーボード", "Teclado Virtual"),
-    ("magnify", "Экранная лупа", "Magnifier", "拡大鏡", "Lupa"),
-    ("charmap", "Таблица символов", "Character Map", "文字コード表", "Mapa de Caracteres"),
-    ("snippingtool", "Ножницы, снимок экрана", "Snipping Tool, screenshot", "Snipping Tool、スクリーンショット", "Ferramenta de Recorte, captura de tela"),
-    ("mrt", "Средство удаления вредоносных программ", "Malicious Software Removal Tool", "悪意のあるソフトウェアの削除ツール", "Ferramenta de Remoção de Software Mal-Intencionado"),
-    ("%temp%", "Временные файлы", "Temporary files", "一時ファイル", "Arquivos temporários"),
-    ("%appdata%", "Папка AppData (Roaming)", "AppData folder (Roaming)", "AppData フォルダー (Roaming)", "Pasta AppData (Roaming)"),
-    ("%localappdata%", "Папка AppData (Local)", "AppData folder (Local)", "AppData フォルダー (Local)", "Pasta AppData (Local)"),
-    ("shell:startup", "Папка автозагрузки", "Startup folder", "スタートアップ フォルダー", "Pasta Inicializar"),
-    ("shell:downloads", "Загрузки", "Downloads", "ダウンロード", "Downloads"),
-    ("shell:appsfolder", "Все приложения", "All apps", "すべてのアプリ", "Todos os aplicativos"),
-    ("ms-settings:", "Параметры Windows", "Windows Settings", "Windows の設定", "Configurações do Windows"),
-    ("ms-settings:windowsupdate", "Центр обновления Windows", "Windows Update", "Windows Update", "Windows Update"),
-    ("ms-settings:display", "Параметры: экран", "Settings: display", "設定: ディスプレイ", "Configurações: vídeo"),
-    ("ms-settings:bluetooth", "Параметры: Bluetooth и устройства", "Settings: Bluetooth and devices", "設定: Bluetooth とデバイス", "Configurações: Bluetooth e dispositivos"),
-    ("ms-settings:network", "Параметры: сеть и Интернет", "Settings: network and internet", "設定: ネットワークとインターネット", "Configurações: rede e internet"),
-    ("ms-settings:appsfeatures", "Параметры: установленные приложения", "Settings: installed apps", "設定: インストールされているアプリ", "Configurações: aplicativos instalados"),
-    ("ms-settings:personalization", "Параметры: персонализация", "Settings: personalization", "設定: 個人用設定", "Configurações: personalização"),
-    ("ms-settings:sound", "Параметры: звук", "Settings: sound", "設定: サウンド", "Configurações: som"),
+pub const KNOWN: &[(&str, &str, &str, &str, &str, &str)] = &[
+    ("cmd", "Командная строка", "Command Prompt", "コマンド プロンプト", "Prompt de Comando", "命令提示符"),
+    ("powershell", "Windows PowerShell", "Windows PowerShell", "Windows PowerShell", "Windows PowerShell", "Windows PowerShell"),
+    ("regedit", "Редактор реестра", "Registry Editor", "レジストリ エディター", "Editor do Registro", "注册表编辑器"),
+    ("taskmgr", "Диспетчер задач", "Task Manager", "タスク マネージャー", "Gerenciador de Tarefas", "任务管理器"),
+    ("control", "Панель управления", "Control Panel", "コントロール パネル", "Painel de Controle", "控制面板"),
+    ("msconfig", "Конфигурация системы, загрузка", "System Configuration, boot", "システム構成、ブート", "Configuração do Sistema, inicialização", "系统配置、启动"),
+    ("services.msc", "Службы", "Services", "サービス", "Serviços", "服务"),
+    ("devmgmt.msc", "Диспетчер устройств", "Device Manager", "デバイス マネージャー", "Gerenciador de Dispositivos", "设备管理器"),
+    ("wt", "Терминал Windows", "Windows Terminal", "Windows ターミナル", "Terminal do Windows", "Windows 终端"),
+    ("notepad", "Блокнот", "Notepad", "メモ帳", "Bloco de Notas", "记事本"),
+    ("calc", "Калькулятор", "Calculator", "電卓", "Calculadora", "计算器"),
+    ("mspaint", "Paint, рисование", "Paint", "ペイント", "Paint", "画图"),
+    ("diskmgmt.msc", "Управление дисками, разделы", "Disk Management, partitions", "ディスクの管理、パーティション", "Gerenciamento de Disco, partições", "磁盘管理、分区"),
+    ("compmgmt.msc", "Управление компьютером", "Computer Management", "コンピューターの管理", "Gerenciamento do Computador", "计算机管理"),
+    ("eventvwr.msc", "Просмотр событий, журналы", "Event Viewer, logs", "イベント ビューアー、ログ", "Visualizador de Eventos, logs", "事件查看器、日志"),
+    ("gpedit.msc", "Редактор локальной групповой политики", "Local Group Policy Editor", "ローカル グループ ポリシー エディター", "Editor de Política de Grupo Local", "本地组策略编辑器"),
+    ("taskschd.msc", "Планировщик заданий", "Task Scheduler", "タスク スケジューラ", "Agendador de Tarefas", "任务计划程序"),
+    ("lusrmgr.msc", "Локальные пользователи и группы", "Local Users and Groups", "ローカル ユーザーとグループ", "Usuários e Grupos Locais", "本地用户和组"),
+    ("perfmon", "Системный монитор, производительность", "Performance Monitor", "パフォーマンス モニター", "Monitor de Desempenho", "性能监视器"),
+    ("resmon", "Монитор ресурсов", "Resource Monitor", "リソース モニター", "Monitor de Recursos", "资源监视器"),
+    ("appwiz.cpl", "Программы и компоненты, удаление программ", "Programs and Features, uninstall", "プログラムと機能、アンインストール", "Programas e Recursos, desinstalar", "程序和功能、卸载程序"),
+    ("optionalfeatures", "Компоненты Windows", "Windows Features", "Windows の機能", "Recursos do Windows", "Windows 功能"),
+    ("ncpa.cpl", "Сетевые подключения, адаптеры", "Network Connections, adapters", "ネットワーク接続、アダプター", "Conexões de Rede, adaptadores", "网络连接、适配器"),
+    ("sysdm.cpl", "Свойства системы, имя компьютера, переменные среды", "System Properties, computer name, environment variables", "システムのプロパティ、コンピューター名、環境変数", "Propriedades do Sistema, nome do computador, variáveis de ambiente", "系统属性、计算机名、环境变量"),
+    ("powercfg.cpl", "Электропитание", "Power Options", "電源オプション", "Opções de Energia", "电源选项"),
+    ("mmsys.cpl", "Звук, устройства воспроизведения", "Sound, playback devices", "サウンド、再生デバイス", "Som, dispositivos de reprodução", "声音、播放设备"),
+    ("main.cpl", "Мышь", "Mouse", "マウス", "Mouse", "鼠标"),
+    ("desk.cpl", "Экран, разрешение", "Display, resolution", "ディスプレイ、解像度", "Vídeo, resolução", "显示、分辨率"),
+    ("timedate.cpl", "Дата и время", "Date and Time", "日付と時刻", "Data e Hora", "日期和时间"),
+    ("inetcpl.cpl", "Свойства браузера, прокси", "Internet Options, proxy", "インターネット オプション、プロキシ", "Opções da Internet, proxy", "Internet 选项、代理"),
+    ("firewall.cpl", "Брандмауэр Защитника Windows", "Windows Defender Firewall", "Windows Defender ファイアウォール", "Firewall do Windows Defender", "Windows Defender 防火墙"),
+    ("cleanmgr", "Очистка диска", "Disk Cleanup", "ディスク クリーンアップ", "Limpeza de Disco", "磁盘清理"),
+    ("dfrgui", "Оптимизация дисков, дефрагментация", "Optimize Drives, defragment", "ドライブの最適化、デフラグ", "Otimizar Unidades, desfragmentar", "优化驱动器、碎片整理"),
+    ("msinfo32", "Сведения о системе", "System Information", "システム情報", "Informações do Sistema", "系统信息"),
+    ("dxdiag", "Диагностика DirectX, видеокарта", "DirectX Diagnostic Tool, graphics", "DirectX 診断ツール、グラフィックス", "Ferramenta de Diagnóstico do DirectX, placa de vídeo", "DirectX 诊断工具、显卡"),
+    ("winver", "О программе Windows, версия", "About Windows, version", "Windows のバージョン情報", "Sobre o Windows, versão", "关于 Windows、版本"),
+    ("mstsc", "Подключение к удалённому рабочему столу", "Remote Desktop Connection", "リモート デスクトップ接続", "Conexão de Área de Trabalho Remota", "远程桌面连接"),
+    ("osk", "Экранная клавиатура", "On-Screen Keyboard", "スクリーン キーボード", "Teclado Virtual", "屏幕键盘"),
+    ("magnify", "Экранная лупа", "Magnifier", "拡大鏡", "Lupa", "放大镜"),
+    ("charmap", "Таблица символов", "Character Map", "文字コード表", "Mapa de Caracteres", "字符映射表"),
+    ("snippingtool", "Ножницы, снимок экрана", "Snipping Tool, screenshot", "Snipping Tool、スクリーンショット", "Ferramenta de Recorte, captura de tela", "截图工具、屏幕截图"),
+    ("mrt", "Средство удаления вредоносных программ", "Malicious Software Removal Tool", "悪意のあるソフトウェアの削除ツール", "Ferramenta de Remoção de Software Mal-Intencionado", "恶意软件删除工具"),
+    ("%temp%", "Временные файлы", "Temporary files", "一時ファイル", "Arquivos temporários", "临时文件"),
+    ("%appdata%", "Папка AppData (Roaming)", "AppData folder (Roaming)", "AppData フォルダー (Roaming)", "Pasta AppData (Roaming)", "AppData 文件夹 (Roaming)"),
+    ("%localappdata%", "Папка AppData (Local)", "AppData folder (Local)", "AppData フォルダー (Local)", "Pasta AppData (Local)", "AppData 文件夹 (Local)"),
+    ("shell:startup", "Папка автозагрузки", "Startup folder", "スタートアップ フォルダー", "Pasta Inicializar", "启动文件夹"),
+    ("shell:downloads", "Загрузки", "Downloads", "ダウンロード", "Downloads", "下载"),
+    ("shell:appsfolder", "Все приложения", "All apps", "すべてのアプリ", "Todos os aplicativos", "所有应用"),
+    ("ms-settings:", "Параметры Windows", "Windows Settings", "Windows の設定", "Configurações do Windows", "Windows 设置"),
+    ("ms-settings:windowsupdate", "Центр обновления Windows", "Windows Update", "Windows Update", "Windows Update", "Windows 更新"),
+    ("ms-settings:display", "Параметры: экран", "Settings: display", "設定: ディスプレイ", "Configurações: vídeo", "设置：显示"),
+    ("ms-settings:bluetooth", "Параметры: Bluetooth и устройства", "Settings: Bluetooth and devices", "設定: Bluetooth とデバイス", "Configurações: Bluetooth e dispositivos", "设置：蓝牙和设备"),
+    ("ms-settings:network", "Параметры: сеть и Интернет", "Settings: network and internet", "設定: ネットワークとインターネット", "Configurações: rede e internet", "设置：网络和 Internet"),
+    ("ms-settings:appsfeatures", "Параметры: установленные приложения", "Settings: installed apps", "設定: インストールされているアプリ", "Configurações: aplicativos instalados", "设置：已安装的应用"),
+    ("ms-settings:personalization", "Параметры: персонализация", "Settings: personalization", "設定: 個人用設定", "Configurações: personalização", "设置：个性化"),
+    ("ms-settings:sound", "Параметры: звук", "Settings: sound", "設定: サウンド", "Configurações: som", "设置：声音"),
 ];
 const POPULAR: usize = 8;
 
@@ -223,7 +223,7 @@ pub fn suggest(text: &str, history: &[String], programs: &[String]) -> Vec<(Stri
     }
     if low.chars().count() >= 3 {
         // by what it does: "реестр" → regedit (short text would match half the list)
-        for (i, k) in KNOWN.iter().enumerate().filter(|(_, k)| k.0.contains(&low) || k.1.to_lowercase().contains(&low) || k.2.to_lowercase().contains(&low) || k.3.to_lowercase().contains(&low) || k.4.to_lowercase().contains(&low)) {
+        for (i, k) in KNOWN.iter().enumerate().filter(|(_, k)| k.0.contains(&low) || k.1.to_lowercase().contains(&low) || k.2.to_lowercase().contains(&low) || k.3.to_lowercase().contains(&low) || k.4.to_lowercase().contains(&low) || k.5.to_lowercase().contains(&low)) {
             add(k.0, Src::Known(i), &mut out);
         }
     }
@@ -303,9 +303,10 @@ mod tests {
         // history before known commands, prefix matches before "contains"
         assert_eq!(suggest("co", &h), ["co", "control", "compmgmt.msc"]);
         assert_eq!(suggest("ed", &h)[..2], ["ed", "regedit"]);
-        // by description, in either language
+        // by description, in any of the five languages
         assert_eq!(suggest("реестр", &[]), ["реестр", "regedit"]);
         assert_eq!(suggest("Registry", &[]), ["Registry", "regedit"]);
+        assert_eq!(suggest("注册表", &[]), ["注册表", "regedit"]);
         // programs by prefix, marked as such
         assert_eq!(super::suggest("chr", &[], &["chrome".into(), "charmap".into()]), [("chr".into(), Src::Typed), ("chrome".into(), Src::Program)]);
         assert_eq!(describe(" REGEDIT "), Some(2));

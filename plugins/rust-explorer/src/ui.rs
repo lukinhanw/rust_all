@@ -8,6 +8,7 @@ use windows_sys::Win32::{Graphics::{Dwm::DwmSetWindowAttribute, Gdi::*}, System:
 
 // The colours come from the WinRust style the topbar gear picks (normal, terminal, dock, tiling): the same palette as the bar.
 pub use winrust_common::style::{pal, ui_face};
+use winrust_common::{lang, Lang, t, tf};
 // sunk surfaces: darker than the window on the dark styles, white on the light one
 pub fn listbg() -> u32 { if winrust_common::style::style().light() { winrust_common::style::card() } else { mix(pal().bg, 0, 0.22) } }
 pub fn pill() -> u32 { if winrust_common::style::style().light() { mix(pal().bg, pal().text, 0.06) } else { mix(pal().bg, 0, 0.35) } }
@@ -227,9 +228,24 @@ fn friendly_date(ft: u64) -> String {
     let now = (now.dwHighDateTime as u64) << 32 | now.dwLowDateTime as u64;
     let (today, yest) = (date_text(now), date_text(now.saturating_sub(864_000_000_000))); // 24 h in 100 ns ticks
     match s.get(..10) {
-        Some(d) if s.len() >= 16 && today.get(..10) == Some(d) => tf!("Сегодня, {}", "Today, {}", pt: "Hoje, {}", &s[11..]),
-        Some(d) if s.len() >= 16 && yest.get(..10) == Some(d) => tf!("Вчера, {}", "Yesterday, {}", pt: "Ontem, {}", &s[11..]),
+        Some(d) if s.len() >= 16 && today.get(..10) == Some(d) => tf!("Сегодня, {}", "Today, {}", ja: "今日 {}", pt: "Hoje, {}", zh: "今天 {}", &s[11..]),
+        Some(d) if s.len() >= 16 && yest.get(..10) == Some(d) => tf!("Вчера, {}", "Yesterday, {}", ja: "昨日 {}", pt: "Ontem, {}", zh: "昨天 {}", &s[11..]),
         _ => s,
+    }
+}
+
+/// "3 items" with the right plural: the status line counts rows and the selection.
+fn items_text(k: usize) -> String {
+    match lang!() {
+        Lang::Ru => match (k % 10, k % 100) {
+            (1, x) if x != 11 => format!("{k} объект"),
+            (2..=4, x) if !(12..=14).contains(&x) => format!("{k} объекта"),
+            _ => format!("{k} объектов"),
+        },
+        Lang::Ja => format!("{k} 個の項目"),
+        Lang::Pt => format!("{k} ite{}", if k == 1 { "m" } else { "ns" }),
+        Lang::Zh => format!("{k} 个项目"),
+        Lang::En => format!("{k} item{}", if k == 1 { "" } else { "s" }),
     }
 }
 
@@ -253,11 +269,7 @@ pub unsafe fn list_draw(lp: LPARAM) -> LRESULT {
                 let of = SelectObject(dc, f_big);
                 text(dc, "\u{E8B7}", rc(0, mid - sc(40), cr.right, mid + sc(10)), mix(listbg(), pal().dim, 0.5), DT_CENTER);
                 SelectObject(dc, f_txt);
-                let msg = if SEARCHING.with_borrow(|s| s.is_some()) {
-                    t!("Ничего не найдено", "Nothing found", pt: "Nada encontrado")
-                } else {
-                    t!("Эта папка пуста", "This folder is empty", pt: "Esta pasta está vazia")
-                };
+                let msg = if SEARCHING.with_borrow(|s| s.is_some()) { t!("Ничего не найдено", "Nothing found", ja: "何も見つかりません", pt: "Nada encontrado", zh: "未找到任何内容") } else { t!("Эта папка пуста", "This folder is empty", ja: "このフォルダーは空です", pt: "Esta pasta está vazia", zh: "此文件夹为空") };
                 text(dc, msg, rc(0, mid + sc(14), cr.right, mid + sc(40)), pal().dim, DT_CENTER);
                 SelectObject(dc, of);
                 DeleteObject(f_big);
@@ -665,17 +677,19 @@ pub unsafe fn paint_status(h: HWND) {
         })
     });
     if let Some((n, sel, bytes)) = snap {
-        let items = |k: usize| match k {
-            1 => tf!("{} элемент", "{} item", pt: "{} item", k),
-            _ => tf!("Элементов: {}", "{} items", pt: "{} itens", k),
-        };
+        let selected = |s: usize| tf!("выбрано: {}", "{} selected", ja: "{} 個選択", pt: "{} selecionado(s)", zh: "已选择 {} 项", s);
         let left = match (sel, bytes) {
-            (0, _) => items(n),
-            (s, 0) => tf!("{}  \u{00B7}  выбрано: {}", "{}  \u{00B7}  {} selected", pt: "{}  \u{00B7}  {} selecionado(s)", items(n), s),
-            (s, b) => tf!("{}  \u{00B7}  выбрано: {}  \u{00B7}  {}", "{}  \u{00B7}  {} selected  \u{00B7}  {}", pt: "{}  \u{00B7}  {} selecionado(s)  \u{00B7}  {}", items(n), s, size_text(b)),
+            (0, _) => items_text(n),
+            (s, 0) => format!("{}  \u{00B7}  {}", items_text(n), selected(s)),
+            (s, b) => format!("{}  \u{00B7}  {}  \u{00B7}  {}", items_text(n), selected(s), size_text(b)),
         };
         let left = crate::jobs::status_text().unwrap_or(left); // a copy, packing or unpacking in progress
-        let by = [t!("Имя", "Name", pt: "Nome"), t!("Дата", "Date", pt: "Data"), t!("Тип", "Type", pt: "Tipo"), t!("Размер", "Size", pt: "Tamanho")][SORT_COL.load(Relaxed).min(3)];
+        let by = [
+            t!("Имя", "Name", ja: "名前", pt: "Nome", zh: "名称"),
+            t!("Дата", "Date", ja: "日付", pt: "Data", zh: "日期"),
+            t!("Тип", "Type", ja: "種類", pt: "Tipo", zh: "类型"),
+            t!("Размер", "Size", ja: "サイズ", pt: "Tamanho", zh: "大小"),
+        ][SORT_COL.load(Relaxed).min(3)];
         let right = format!("{by} {}", if SORT_ASC.load(Relaxed) { "\u{2191}" } else { "\u{2193}" });
         let f = font(12, 400, ui_face()) as HFONT;
         let of = SelectObject(dc, f);
@@ -761,7 +775,7 @@ pub unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> L
             // right click on a pinned folder: unpin it
             if let Some(p) = nav_hit(y).and_then(nav_path).filter(|p| pins().contains(p)) {
                 let menu = CreatePopupMenu();
-                AppendMenuW(menu, MF_STRING, 1, w(t!("Открепить от панели быстрого доступа", "Unpin from Quick access", pt: "Desafixar do Acesso rápido")).as_ptr());
+                AppendMenuW(menu, MF_STRING, 1, w(t!("Открепить от быстрого доступа", "Unpin from Quick access", ja: "クイック アクセスからピン留めを解除", pt: "Desafixar do Acesso rápido", zh: "从快速访问取消固定")).as_ptr());
                 let mut pt: POINT = std::mem::zeroed();
                 GetCursorPos(&mut pt);
                 let id = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, h, ptr::null());
@@ -817,24 +831,25 @@ pub fn toggle_pin(p: &Path) {
 pub fn nav_init(h: HWND) {
     NAVWND.set(h as isize);
     let home = PathBuf::from(env::var_os("USERPROFILE").unwrap_or_default());
-    let head = |t: &str| NavItem { title: t.into(), path: PathBuf::new(), glyph: "", cap: None };
-    let mut v = vec![head(t!("Быстрый доступ", "Quick access", pt: "Acesso rápido")), NavItem { title: t!("Главная", "Home", pt: "Início").into(), path: home.clone(), glyph: "\u{E80F}", cap: None }];
+    let head = |lbl: &str| NavItem { title: lbl.into(), path: PathBuf::new(), glyph: "", cap: None };
+    let mut v = vec![head(t!("Быстрый доступ", "Quick access", ja: "クイック アクセス", pt: "Acesso rápido", zh: "快速访问")), NavItem { title: t!("Главная", "Home", ja: "ホーム", pt: "Início", zh: "主页").into(), path: home.clone(), glyph: "\u{E80F}", cap: None }];
     use windows::Win32::UI::Shell::{FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_Downloads, FOLDERID_Music, FOLDERID_Pictures, FOLDERID_Videos};
-    for (t, id, g) in [
-        (t!("Рабочий стол", "Desktop", pt: "Área de Trabalho"), &FOLDERID_Desktop, "\u{E7F4}"),
-        (t!("Загрузки", "Downloads", pt: "Downloads"), &FOLDERID_Downloads, "\u{E896}"),
-        (t!("Документы", "Documents", pt: "Documentos"), &FOLDERID_Documents, "\u{E8A5}"),
-        (t!("Изображения", "Pictures", pt: "Imagens"), &FOLDERID_Pictures, "\u{E91B}"),
-        (t!("Музыка", "Music", pt: "Músicas"), &FOLDERID_Music, "\u{E8D6}"),
-        (t!("Видео", "Videos", pt: "Vídeos"), &FOLDERID_Videos, "\u{E714}"),
-    ] {
+    let known = [
+        (t!("Рабочий стол", "Desktop", ja: "デスクトップ", pt: "Área de Trabalho", zh: "桌面"), &FOLDERID_Desktop, "\u{E7F4}"),
+        (t!("Загрузки", "Downloads", ja: "ダウンロード", pt: "Downloads", zh: "下载"), &FOLDERID_Downloads, "\u{E896}"),
+        (t!("Документы", "Documents", ja: "ドキュメント", pt: "Documentos", zh: "文档"), &FOLDERID_Documents, "\u{E8A5}"),
+        (t!("Изображения", "Pictures", ja: "ピクチャ", pt: "Imagens", zh: "图片"), &FOLDERID_Pictures, "\u{E91B}"),
+        (t!("Музыка", "Music", ja: "ミュージック", pt: "Música", zh: "音乐"), &FOLDERID_Music, "\u{E8D6}"),
+        (t!("Видео", "Videos", ja: "ビデオ", pt: "Vídeos", zh: "视频"), &FOLDERID_Videos, "\u{E714}"),
+    ];
+    for (lbl, id, g) in known {
         let Some(p) = crate::sh::known_dir(id).filter(|p| p.is_dir()) else { continue };
-        v.push(NavItem { title: t.into(), path: p, glyph: g, cap: None });
+        v.push(NavItem { title: lbl.into(), path: p, glyph: g, cap: None });
     }
     for p in pins() {
         if p.is_dir() { v.push(NavItem { title: p.file_name().map_or_else(|| p.to_string_lossy().into_owned(), |n| n.to_string_lossy().into_owned()), path: p, glyph: "\u{E718}", cap: None }); }
     }
-    v.push(head(t!("Этот компьютер", "This PC", pt: "Este Computador")));
+    v.push(head(t!("Этот компьютер", "This PC", ja: "PC", pt: "Este Computador", zh: "此电脑")));
     unsafe {
         use windows_sys::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW};
         let mask = GetLogicalDrives();
@@ -846,7 +861,7 @@ pub fn nav_init(h: HWND) {
             let ty = GetDriveTypeW(w(&root).as_ptr());
             if ty == 4 {
                 // a mapped network drive: listed without label and size, they would stall the window while a share is down
-                v.push(NavItem { title: tf!("Сетевой диск ({}:)", "Network Drive ({}:)", pt: "Unidade de rede ({}:)", letter), path: PathBuf::from(root), glyph: "\u{E8CE}", cap: None });
+                v.push(NavItem { title: tf!("Сетевой диск ({}:)", "Network Drive ({}:)", ja: "ネットワーク ドライブ ({}:)", pt: "Unidade de rede ({}:)", zh: "网络驱动器（{}:）", letter), path: PathBuf::from(root), glyph: "\u{E8CE}", cap: None });
                 continue;
             }
             if !matches!(ty, 2 | 3) { continue; }
@@ -855,7 +870,8 @@ pub fn nav_init(h: HWND) {
             let name = if ok != 0 { wstr(label.as_ptr()) } else { String::new() };
             let (mut free, mut total) = (0u64, 0u64);
             let cap = (GetDiskFreeSpaceExW(w(&root).as_ptr(), &mut free, &mut total, ptr::null_mut()) != 0 && total > 0).then_some((free, total));
-            v.push(NavItem { title: format!("{} ({letter}:)", if name.is_empty() { t!("Локальный диск", "Local Disk", pt: "Disco Local") } else { &name }), path: PathBuf::from(root), glyph: "\u{EDA2}", cap });
+            let base = if name.is_empty() { t!("Локальный диск", "Local Disk", ja: "ローカル ディスク", pt: "Disco local", zh: "本地磁盘") } else { &name };
+            v.push(NavItem { title: format!("{base} ({letter}:)"), path: PathBuf::from(root), glyph: "\u{EDA2}", cap });
         }
     }
     NAV.with_borrow_mut(|n| *n = v);

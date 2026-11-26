@@ -4,3 +4,4 @@ target/
 /payload/*.exe
 *.log
 .claude/
+CLAUDE.md

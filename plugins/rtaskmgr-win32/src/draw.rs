@@ -221,7 +221,7 @@ impl App {
         g.unclip();
 
         if ui.rows.is_empty() {
-            let msg = if ui.search.is_empty() { t!("Нет данных", "No data", ja: "データなし", pt: "Sem dados") } else { t!("Ничего не найдено", "Nothing found", ja: "見つかりません", pt: "Nada encontrado") };
+            let msg = if ui.search.is_empty() { t!("Нет данных", "No data", ja: "データなし", pt: "Sem dados", zh: "无数据") } else { t!("Ничего не найдено", "Nothing found", ja: "見つかりません", pt: "Nada encontrado", zh: "未找到任何内容") };
             g.text_center(R::new(area.l, area.t + g.px(30.0), area.r, area.t + g.px(70.0)), msg, Font::Ui, th.dim);
         }
 
@@ -266,7 +266,7 @@ impl App {
             let ctl = R::new(r.r - g.px(200.0), r.t, r.r - g.px(16.0), r.b);
             match id {
                 SettingId::Theme => {
-                    let seg = [t!("Светлая", "Light", ja: "ライト", pt: "Claro"), t!("Тёмная", "Dark", ja: "ダーク", pt: "Escuro"), t!("Системная", "System", ja: "システム", pt: "Sistema")];
+                    let seg = [t!("Светлая", "Light", ja: "ライト", pt: "Claro", zh: "浅色"), t!("Тёмная", "Dark", ja: "ダーク", pt: "Escuro", zh: "深色"), t!("Системная", "System", ja: "システム", pt: "Sistema", zh: "系统")];
                     let sw = ctl.w() / 3;
                     for (i, s) in seg.iter().enumerate() {
                         let sr = R::new(ctl.l + i as i32 * sw, r.t + g.px(14.0), ctl.l + (i as i32 + 1) * sw, r.b - g.px(14.0));
@@ -284,7 +284,7 @@ impl App {
                     let cx = if on { t.r - g.px(11.0) } else { t.l + g.px(11.0) };
                     g.round(R::new(cx - kn, t.t + g.px(10.0) - kn, cx + kn, t.t + g.px(10.0) + kn), kn, Some(if on { if th.dark { Rgb(0, 0, 0) } else { Rgb(255, 255, 255) } } else { th.dim }), None);
                     if !enabled {
-                        g.text_right(R::new(ctl.l, r.t, t.l - g.px(10.0), r.b), t!("нужен администратор", "administrator needed", ja: "管理者権限が必要です", pt: "requer administrador"), Font::Small, th.dim);
+                        g.text_right(R::new(ctl.l, r.t, t.l - g.px(10.0), r.b), t!("нужен администратор", "administrator needed", ja: "管理者権限が必要です", pt: "requer administrador", zh: "需要管理员权限"), Font::Small, th.dim);
                     }
                 }
             }
@@ -328,7 +328,7 @@ impl App {
         let block_h = ((m.h() as f64 * frac) as i32).max(g.px(180.0));
         let block = R::new(m.l, m.t + g.px(56.0), m.r, m.t + g.px(56.0) + block_h);
         self.draw_graph_block(g, it, block);
-        g.text(R::new(m.l, block.b + g.px(2.0), m.l + g.px(200.0), block.b + g.px(20.0)), t!("60 секунд", "60 seconds", ja: "60 秒", pt: "60 segundos"), Font::Small, th.dim);
+        g.text(R::new(m.l, block.b + g.px(2.0), m.l + g.px(200.0), block.b + g.px(20.0)), t!("60 секунд", "60 seconds", ja: "60 秒", pt: "60 segundos", zh: "60 秒"), Font::Small, th.dim);
         g.text_right(R::new(m.r - g.px(100.0), block.b + g.px(2.0), m.r, block.b + g.px(20.0)), "0", Font::Small, th.dim);
         let mut y = block.b + g.px(30.0);
         if let Some((cap, segs)) = &it.composition {
@@ -357,11 +357,14 @@ impl App {
             g.text(R::new(bx, by + g.px(18.0), bx + colw + g.px(10.0), by + g.px(48.0)), value, Font::Big, th.text);
             bx += colw + g.px(20.0);
         }
-        let rx = (m.l + cols as i32 * (colw + g.px(20.0)) + g.px(40.0)).max(m.r - g.px(520.0));
-        let mut ry = y;
+        // the facts go right of the stats when there is room, otherwise below them: in a narrow window the value
+        // column used to start past the right edge and showed nothing (#170)
+        let stats_r = m.l + cols as i32 * (colw + g.px(20.0)) + g.px(40.0);
+        let (rx, mut ry) = if m.r - stats_r >= g.px(380.0) { (stats_r.max(m.r - g.px(520.0)), y) } else { (m.l, by + g.px(66.0)) };
+        let kw = g.px(230.0).min((m.r - rx) * 3 / 5);
         for (k, v) in &it.facts {
-            g.text(R::new(rx, ry, rx + g.px(230.0), ry + g.px(22.0)), k, Font::Small, th.dim);
-            g.text(R::new(rx + g.px(230.0), ry, m.r, ry + g.px(22.0)), v, Font::Small, th.text);
+            g.text(R::new(rx, ry, rx + kw, ry + g.px(22.0)), k, Font::Small, th.dim);
+            g.text(R::new(rx + kw, ry, m.r, ry + g.px(22.0)), v, Font::Small, th.text);
             ry += g.px(22.0);
         }
     }
@@ -448,11 +451,11 @@ pub enum SettingId {
 
 pub fn setting_text(id: SettingId) -> (&'static str, &'static str) {
     match id {
-        SettingId::Theme => (t!("Тема оформления", "Theme", ja: "テーマ", pt: "Tema"), t!("Светлая, тёмная или как в системе", "Light, dark or follow the system", ja: "ライト、ダーク、またはシステムに従う", pt: "Claro, escuro ou seguir o sistema")),
-        SettingId::Tray => (t!("Закрытие окна сворачивает в трей", "Closing the window minimizes to tray", ja: "ウィンドウを閉じるとトレイに最小化", pt: "Fechar a janela minimiza para a bandeja"), t!("Программа продолжит собирать историю и применять правила; вернуть окно можно по Ctrl+Alt+T", "The program keeps collecting history and applying rules; bring the window back with Ctrl+Alt+T", ja: "プログラムは履歴の収集とルールの適用を続けます。ウィンドウは Ctrl+Alt+T で戻せます", pt: "O programa continua coletando o histórico e aplicando as regras; traga a janela de volta com Ctrl+Alt+T")),
-        SettingId::Autostart => (t!("Запускать при входе в Windows", "Start with Windows", ja: "Windows と同時に起動", pt: "Iniciar com o Windows"), t!("Сразу в трей, без окна", "Straight to the tray, no window", ja: "ウィンドウを表示せず、直接トレイへ", pt: "Direto na bandeja, sem janela")),
-        SettingId::Etw => (t!("Сеть по процессам", "Per-process network", ja: "プロセスごとのネットワーク", pt: "Rede por processo"), t!("Колонка «Сеть» в процессах (ETW). Требуются права администратора", "'Network' column in Processes (ETW). Needs administrator rights", ja: "「プロセス」の「ネットワーク」列 (ETW)。管理者権限が必要です", pt: "Coluna 'Rede' em Processos (ETW). Exige direitos de administrador")),
-        SettingId::GpuTemp => (t!("Всегда читать температуру GPU", "Always read GPU temperature", ja: "GPU 温度を常に読み取る", pt: "Sempre ler a temperatura da GPU"), t!("Иначе температура читается только на странице GPU. Постоянный опрос может будить дискретную видеокарту ноутбука", "Otherwise the temperature is read only on the GPU page. Constant polling can wake a laptop's discrete GPU", ja: "オフの場合、温度は GPU ページでのみ読み取られます。常時ポーリングするとノート PC の外部 GPU が起動することがあります", pt: "Caso contrário, a temperatura é lida só na página da GPU. A leitura constante pode acordar a GPU dedicada de um notebook")),
+        SettingId::Theme => (t!("Тема оформления", "Theme", ja: "テーマ", pt: "Tema", zh: "主题"), t!("Светлая, тёмная или как в системе", "Light, dark or follow the system", ja: "ライト、ダーク、またはシステムに従う", pt: "Claro, escuro ou seguir o sistema", zh: "浅色、深色或跟随系统")),
+        SettingId::Tray => (t!("Закрытие окна сворачивает в трей", "Closing the window minimizes to tray", ja: "ウィンドウを閉じるとトレイに最小化", pt: "Fechar a janela minimiza para a bandeja", zh: "关闭窗口时最小化到托盘"), t!("Программа продолжит собирать историю и применять правила; вернуть окно можно по Ctrl+Alt+T", "The program keeps collecting history and applying rules; bring the window back with Ctrl+Alt+T", ja: "プログラムは履歴の収集とルールの適用を続けます。ウィンドウは Ctrl+Alt+T で戻せます", pt: "O programa continua coletando o histórico e aplicando as regras; traga a janela de volta com Ctrl+Alt+T", zh: "程序会持续收集历史记录并应用规则；按 Ctrl+Alt+T 可将窗口调回来")),
+        SettingId::Autostart => (t!("Запускать при входе в Windows", "Start with Windows", ja: "Windows と同時に起動", pt: "Iniciar com o Windows", zh: "随 Windows 启动"), t!("Сразу в трей, без окна", "Straight to the tray, no window", ja: "ウィンドウを表示せず、直接トレイへ", pt: "Direto na bandeja, sem janela", zh: "直接进托盘，不显示窗口")),
+        SettingId::Etw => (t!("Сеть по процессам", "Per-process network", ja: "プロセスごとのネットワーク", pt: "Rede por processo", zh: "按进程统计网络"), t!("Колонка «Сеть» в процессах (ETW). Требуются права администратора", "'Network' column in Processes (ETW). Needs administrator rights", ja: "「プロセス」の「ネットワーク」列 (ETW)。管理者権限が必要です", pt: "Coluna 'Rede' em Processos (ETW). Exige direitos de administrador", zh: "进程中的「网络」列（ETW）。需要管理员权限")),
+        SettingId::GpuTemp => (t!("Всегда читать температуру GPU", "Always read GPU temperature", ja: "GPU 温度を常に読み取る", pt: "Sempre ler a temperatura da GPU", zh: "始终读取 GPU 温度"), t!("Иначе температура читается только на странице GPU. Постоянный опрос может будить дискретную видеокарту ноутбука", "Otherwise the temperature is read only on the GPU page. Constant polling can wake a laptop's discrete GPU", ja: "オフの場合、温度は GPU ページでのみ読み取られます。常時ポーリングするとノート PC の外部 GPU が起動することがあります", pt: "Caso contrário, a temperatura é lida só na página da GPU. A leitura constante pode acordar a GPU dedicada de um notebook", zh: "否则温度仅在 GPU 页面读取。持续轮询可能唤醒笔记本的独立显卡")),
     }
 }
 
@@ -516,11 +519,11 @@ pub struct PerfItem<'a> {
 }
 
 fn gb(b: u64) -> String {
-    tf!("{} ГБ", "{} GB", ja: "{} GB", pt: "{} GB", dec(b as f64 / 1_073_741_824.0, 1))
+    tf!("{} ГБ", "{} GB", ja: "{} GB", pt: "{} GB", zh: "{} GB", dec(b as f64 / 1_073_741_824.0, 1))
 }
 
 fn mb_cache(b: u64) -> String {
-    if b >= 1 << 20 { tf!("{} МБ", "{} MB", ja: "{} MB", pt: "{} MB", dec(b as f64 / 1_048_576.0, 1)) } else { tf!("{} КБ", "{} KB", ja: "{} KB", pt: "{} KB", b >> 10) }
+    if b >= 1 << 20 { tf!("{} МБ", "{} MB", ja: "{} MB", pt: "{} MB", zh: "{} MB", dec(b as f64 / 1_048_576.0, 1)) } else { tf!("{} КБ", "{} KB", ja: "{} KB", pt: "{} KB", zh: "{} KB", b >> 10) }
 }
 
 /// Название подключения по имени адаптера: «Wi-Fi», «Ethernet», «Bluetooth» …
@@ -531,7 +534,7 @@ pub fn conn_name(adapter: &str) -> &'static str {
     } else if l.contains("bluetooth") {
         "Bluetooth"
     } else if l.contains("vmware") || l.contains("virtual") || l.contains("hyper-v") || l.contains("vethernet") || l.contains("vpn") || l.contains("tap-") {
-        t!("Виртуальный адаптер", "Virtual adapter", ja: "仮想アダプター", pt: "Adaptador virtual")
+        t!("Виртуальный адаптер", "Virtual adapter", ja: "仮想アダプター", pt: "Adaptador virtual", zh: "虚拟适配器")
     } else {
         "Ethernet"
     }
@@ -548,7 +551,7 @@ pub fn perf_items(d: &Data) -> Vec<PerfItem<'_>> {
     let used = d.sys.used_memory();
     let cpu_brand = d.sys.cpus().first().map_or(String::new(), |c| c.brand().to_string());
     let m = &d.meminfo;
-    let ms = |x: f64| tf!("{} МБ/с", "{} MB/s", ja: "{} MB/秒", pt: "{} MB/s", dec(x / 1_048_576.0, 1));
+    let ms = |x: f64| tf!("{} МБ/с", "{} MB/s", ja: "{} MB/秒", pt: "{} MB/s", zh: "{} MB/s", dec(x / 1_048_576.0, 1));
     let gspec = |label: &str, right: &str, q, color, ymax| GraphSpec { label: label.into(), right: right.into(), series: vec![(q, color)], ymax };
     let kinds = perf_kinds(d);
     let mut v = vec![];
@@ -571,31 +574,31 @@ pub fn perf_items(d: &Data) -> Vec<PerfItem<'_>> {
         match kind {
             PerfKind::Cpu => v.push(PerfItem {
                 kind,
-                title: t!("ЦП", "CPU", ja: "CPU", pt: "CPU").into(),
-                line1: tf!("{:.0}%  {} ГГц", "{:.0}%  {} GHz", ja: "{:.0}%  {} GHz", pt: "{:.0}%  {} GHz", last(&s.cpu), dec(speed as f64, 2)),
+                title: t!("ЦП", "CPU", ja: "CPU", pt: "CPU", zh: "CPU").into(),
+                line1: tf!("{:.0}%  {} ГГц", "{:.0}%  {} GHz", ja: "{:.0}%  {} GHz", pt: "{:.0}%  {} GHz", zh: "{:.0}%  {} GHz", last(&s.cpu), dec(speed as f64, 2)),
                 line2: String::new(),
-                graphs: vec![gspec(t!("% использования", "% utilization", ja: "使用率 (%)", pt: "% de utilização"), "100%", &s.cpu, col(0), 100.0)],
+                graphs: vec![gspec(t!("% использования", "% utilization", ja: "使用率 (%)", pt: "% de utilização", zh: "% 利用率"), "100%", &s.cpu, col(0), 100.0)],
                 layout: GLayout::Single,
-                big_title: t!("ЦП", "CPU", ja: "CPU", pt: "CPU").into(),
+                big_title: t!("ЦП", "CPU", ja: "CPU", pt: "CPU", zh: "CPU").into(),
                 device: cpu_brand.clone(),
                 stats: vec![
-                    (t!("Использование", "Utilization", ja: "使用率", pt: "Utilização").into(), format!("{:.0}%", last(&s.cpu))),
-                    (t!("Скорость", "Speed", ja: "速度", pt: "Velocidade").into(), tf!("{} ГГц", "{} GHz", ja: "{} GHz", pt: "{} GHz", dec(speed as f64, 2))),
-                    (t!("Процессы", "Processes", ja: "プロセス", pt: "Processos").into(), m.processes.to_string()),
-                    (t!("Потоки", "Threads", ja: "スレッド", pt: "Threads").into(), m.threads.to_string()),
-                    (t!("Дескрипторы", "Handles", ja: "ハンドル", pt: "Identificadores").into(), m.handles.to_string()),
-                    (t!("Время работы", "Up time", ja: "稼働時間", pt: "Tempo de atividade").into(), fmt_uptime(crate::perf::uptime_secs())),
+                    (t!("Использование", "Utilization", ja: "使用率", pt: "Utilização", zh: "利用率").into(), format!("{:.0}%", last(&s.cpu))),
+                    (t!("Скорость", "Speed", ja: "速度", pt: "Velocidade", zh: "速度").into(), tf!("{} ГГц", "{} GHz", ja: "{} GHz", pt: "{} GHz", zh: "{} GHz", dec(speed as f64, 2))),
+                    (t!("Процессы", "Processes", ja: "プロセス", pt: "Processos", zh: "进程").into(), m.processes.to_string()),
+                    (t!("Потоки", "Threads", ja: "スレッド", pt: "Threads", zh: "线程").into(), m.threads.to_string()),
+                    (t!("Дескрипторы", "Handles", ja: "ハンドル", pt: "Identificadores", zh: "句柄").into(), m.handles.to_string()),
+                    (t!("Время работы", "Up time", ja: "稼働時間", pt: "Tempo de atividade", zh: "运行时间").into(), fmt_uptime(crate::perf::uptime_secs())),
                 ],
                 stat_cols: 2,
                 facts: vec![
-                    (t!("Базовая скорость:", "Base speed:", ja: "基本速度:", pt: "Velocidade base:").into(), tf!("{} ГГц", "{} GHz", ja: "{} GHz", pt: "{} GHz", dec(si.base_mhz as f64 / 1000.0, 2))),
-                    (t!("Сокетов:", "Sockets:", ja: "ソケット:", pt: "Soquetes:").into(), si.sockets.to_string()),
-                    (t!("Ядер:", "Cores:", ja: "コア:", pt: "Núcleos:").into(), sysinfo::System::physical_core_count().unwrap_or(0).to_string()),
-                    (t!("Логических процессоров:", "Logical processors:", ja: "論理プロセッサ:", pt: "Processadores lógicos:").into(), d.sys.cpus().len().to_string()),
-                    (t!("Виртуализация:", "Virtualization:", ja: "仮想化:", pt: "Virtualização:").into(), if si.virt { t!("Включено", "Enabled", ja: "有効", pt: "Ativada") } else { t!("Отключено", "Disabled", ja: "無効", pt: "Desativada") }.into()),
-                    (t!("Кэш L1:", "L1 cache:", ja: "L1 キャッシュ:", pt: "Cache L1:").into(), mb_cache(si.l1)),
-                    (t!("Кэш L2:", "L2 cache:", ja: "L2 キャッシュ:", pt: "Cache L2:").into(), mb_cache(si.l2)),
-                    (t!("Кэш L3:", "L3 cache:", ja: "L3 キャッシュ:", pt: "Cache L3:").into(), mb_cache(si.l3)),
+                    (t!("Базовая скорость:", "Base speed:", ja: "基本速度:", pt: "Velocidade base:", zh: "基准速度：").into(), tf!("{} ГГц", "{} GHz", ja: "{} GHz", pt: "{} GHz", zh: "{} GHz", dec(si.base_mhz as f64 / 1000.0, 2))),
+                    (t!("Сокетов:", "Sockets:", ja: "ソケット:", pt: "Soquetes:", zh: "插槽：").into(), si.sockets.to_string()),
+                    (t!("Ядер:", "Cores:", ja: "コア:", pt: "Núcleos:", zh: "核心数：").into(), sysinfo::System::physical_core_count().unwrap_or(0).to_string()),
+                    (t!("Логических процессоров:", "Logical processors:", ja: "論理プロセッサ:", pt: "Processadores lógicos:", zh: "逻辑处理器：").into(), d.sys.cpus().len().to_string()),
+                    (t!("Виртуализация:", "Virtualization:", ja: "仮想化:", pt: "Virtualização:", zh: "虚拟化：").into(), if si.virt { t!("Включено", "Enabled", ja: "有効", pt: "Ativada", zh: "已启用") } else { t!("Отключено", "Disabled", ja: "無効", pt: "Desativada", zh: "已禁用") }.into()),
+                    (t!("Кэш L1:", "L1 cache:", ja: "L1 キャッシュ:", pt: "Cache L1:", zh: "L1 缓存：").into(), mb_cache(si.l1)),
+                    (t!("Кэш L2:", "L2 cache:", ja: "L2 キャッシュ:", pt: "Cache L2:", zh: "L2 缓存：").into(), mb_cache(si.l2)),
+                    (t!("Кэш L3:", "L3 cache:", ja: "L3 キャッシュ:", pt: "Cache L3:", zh: "L3 缓存：").into(), mb_cache(si.l3)),
                 ],
                 composition: None,
             }),
@@ -609,52 +612,52 @@ pub fn perf_items(d: &Data) -> Vec<PerfItem<'_>> {
                 let cached = if d.sample.mem_modified + d.sample.mem_standby > 0 { d.sample.mem_modified + d.sample.mem_standby } else { m.cache };
                 let mut facts: Vec<(String, String)> = vec![];
                 if !mh.dimms.is_empty() {
-                    facts.push((t!("Скорость:", "Speed:", ja: "速度:", pt: "Velocidade:").into(), tf!("{} МТ/с", "{} MT/s", ja: "{} MT/秒", pt: "{} MT/s", mh.speed())));
-                    facts.push((t!("Использовано слотов:", "Slots used:", ja: "使用中のスロット:", pt: "Slots usados:").into(), tf!("{} из {}", "{} of {}", ja: "{} / {}", pt: "{} de {}", mh.dimms.len(), mh.slots.max(mh.dimms.len() as u32))));
-                    facts.push((t!("Форм-фактор:", "Form factor:", ja: "フォーム ファクター:", pt: "Formato:").into(), mh.form().into()));
-                    facts.push((t!("Зарезервировано аппаратурой:", "Hardware reserved:", ja: "ハードウェア予約済み:", pt: "Reservada para hardware:").into(), tf!("{} МБ", "{} MB", ja: "{} MB", pt: "{} MB", dec(reserved as f64 / 1_048_576.0, 0))));
+                    facts.push((t!("Скорость:", "Speed:", ja: "速度:", pt: "Velocidade:", zh: "速度：").into(), tf!("{} МТ/с", "{} MT/s", ja: "{} MT/秒", pt: "{} MT/s", zh: "{} MT/s", mh.speed())));
+                    facts.push((t!("Использовано слотов:", "Slots used:", ja: "使用中のスロット:", pt: "Slots usados:", zh: "已用插槽：").into(), tf!("{} из {}", "{} of {}", ja: "{} / {}", pt: "{} de {}", zh: "{} / {}", mh.dimms.len(), mh.slots.max(mh.dimms.len() as u32))));
+                    facts.push((t!("Форм-фактор:", "Form factor:", ja: "フォーム ファクター:", pt: "Formato:", zh: "外形规格：").into(), mh.form().into()));
+                    facts.push((t!("Зарезервировано аппаратурой:", "Hardware reserved:", ja: "ハードウェア予約済み:", pt: "Reservada para hardware:", zh: "硬件保留：").into(), tf!("{} МБ", "{} MB", ja: "{} MB", pt: "{} MB", zh: "{} MB", dec(reserved as f64 / 1_048_576.0, 0))));
                     if !kind_txt.is_empty() {
-                        facts.push((t!("Тип:", "Type:", ja: "種類:", pt: "Tipo:").into(), kind_txt.into()));
+                        facts.push((t!("Тип:", "Type:", ja: "種類:", pt: "Tipo:", zh: "类型：").into(), kind_txt.into()));
                     }
                     if let Some(d0) = mh.dimms.first().filter(|x| !x.mfr.is_empty()) {
-                        facts.push((t!("Производитель:", "Manufacturer:", ja: "製造元:", pt: "Fabricante:").into(), d0.mfr.clone()));
+                        facts.push((t!("Производитель:", "Manufacturer:", ja: "製造元:", pt: "Fabricante:", zh: "制造商：").into(), d0.mfr.clone()));
                     }
                 }
                 let t = total.max(1) as f32;
                 let (mut seg, mut parts): (Vec<(f32, Rgb)>, Vec<String>) = (vec![], vec![]);
                 seg.push((used as f32 / t, col(1)));
-                parts.push(tf!("Используется {}", "In use {}", ja: "使用中 {}", pt: "Em uso {}", gb(used)));
+                parts.push(tf!("Используется {}", "In use {}", ja: "使用中 {}", pt: "Em uso {}", zh: "使用中 {}", gb(used)));
                 if d.sample.mem_modified > 0 {
                     seg.push((d.sample.mem_modified as f32 / t, col(1).lerp(Rgb(255, 255, 255), 0.25)));
-                    parts.push(tf!("Изменено {}", "Modified {}", ja: "変更済み {}", pt: "Modificada {}", gb(d.sample.mem_modified)));
+                    parts.push(tf!("Изменено {}", "Modified {}", ja: "変更済み {}", pt: "Modificada {}", zh: "已修改 {}", gb(d.sample.mem_modified)));
                 }
                 if d.sample.mem_standby > 0 {
                     seg.push(((d.sample.mem_standby.min(avail)) as f32 / t, col(1).lerp(Rgb(128, 128, 128), 0.6)));
-                    parts.push(tf!("В режиме ожидания {}", "Standby {}", ja: "スタンバイ {}", pt: "Em espera {}", gb(d.sample.mem_standby)));
+                    parts.push(tf!("В режиме ожидания {}", "Standby {}", ja: "スタンバイ {}", pt: "Em espera {}", zh: "备用 {}", gb(d.sample.mem_standby)));
                 }
                 if d.sample.mem_free > 0 {
-                    parts.push(tf!("Свободно {}", "Free {}", ja: "空き {}", pt: "Livre {}", gb(d.sample.mem_free)));
+                    parts.push(tf!("Свободно {}", "Free {}", ja: "空き {}", pt: "Livre {}", zh: "可用 {}", gb(d.sample.mem_free)));
                 }
                 v.push(PerfItem {
                     kind,
-                    title: t!("Память", "Memory", ja: "メモリ", pt: "Memória").into(),
+                    title: t!("Память", "Memory", ja: "メモリ", pt: "Memória", zh: "内存").into(),
                     line1: format!("{}/{} ({:.0}%)", dec(used as f64 / 1_073_741_824.0, 1), gb(total), d.mem_pct),
                     line2: String::new(),
-                    graphs: vec![gspec(t!("Использование памяти", "Memory usage", ja: "メモリ使用量", pt: "Uso de memória"), &gb(total), &s.mem, col(1), 100.0)],
+                    graphs: vec![gspec(t!("Использование памяти", "Memory usage", ja: "メモリ使用量", pt: "Uso de memória", zh: "内存使用量"), &gb(total), &s.mem, col(1), 100.0)],
                     layout: GLayout::Single,
-                    big_title: t!("Память", "Memory", ja: "メモリ", pt: "Memória").into(),
+                    big_title: t!("Память", "Memory", ja: "メモリ", pt: "Memória", zh: "内存").into(),
                     device: if kind_txt.is_empty() { gb(total) } else { format!("{} {}", gb(total), kind_txt) },
                     stats: vec![
-                        (if compressed > 0 { t!("Используется (сжато)", "In use (compressed)", ja: "使用中 (圧縮)", pt: "Em uso (comprimida)") } else { t!("Используется", "In use", ja: "使用中", pt: "Em uso") }.into(), if compressed > 0 { format!("{} ({})", gb(used), gb(compressed)) } else { gb(used) }),
-                        (t!("Доступно", "Available", ja: "利用可能", pt: "Disponível").into(), gb(avail)),
-                        (t!("Выделено", "Committed", ja: "コミット済み", pt: "Confirmada").into(), format!("{}/{}", dec(m.commit_total as f64 / 1_073_741_824.0, 1), gb(m.commit_limit))),
-                        (t!("Кэшировано", "Cached", ja: "キャッシュ済み", pt: "Em cache").into(), gb(cached)),
-                        (t!("Выгружаемый пул", "Paged pool", ja: "ページ プール", pt: "Pool paginado").into(), tf!("{} МБ", "{} MB", ja: "{} MB", pt: "{} MB", dec(m.paged as f64 / 1_048_576.0, 0))),
-                        (t!("Невыгружаемый пул", "Non-paged pool", ja: "非ページ プール", pt: "Pool não paginado").into(), tf!("{} МБ", "{} MB", ja: "{} MB", pt: "{} MB", dec(m.nonpaged as f64 / 1_048_576.0, 0))),
+                        (if compressed > 0 { t!("Используется (сжато)", "In use (compressed)", ja: "使用中 (圧縮)", pt: "Em uso (comprimida)", zh: "使用中（已压缩）") } else { t!("Используется", "In use", ja: "使用中", pt: "Em uso", zh: "使用中") }.into(), if compressed > 0 { format!("{} ({})", gb(used), gb(compressed)) } else { gb(used) }),
+                        (t!("Доступно", "Available", ja: "利用可能", pt: "Disponível", zh: "可用").into(), gb(avail)),
+                        (t!("Выделено", "Committed", ja: "コミット済み", pt: "Confirmada", zh: "已提交").into(), format!("{}/{}", dec(m.commit_total as f64 / 1_073_741_824.0, 1), gb(m.commit_limit))),
+                        (t!("Кэшировано", "Cached", ja: "キャッシュ済み", pt: "Em cache", zh: "已缓存").into(), gb(cached)),
+                        (t!("Выгружаемый пул", "Paged pool", ja: "ページ プール", pt: "Pool paginado", zh: "分页池").into(), tf!("{} МБ", "{} MB", ja: "{} MB", pt: "{} MB", zh: "{} MB", dec(m.paged as f64 / 1_048_576.0, 0))),
+                        (t!("Невыгружаемый пул", "Non-paged pool", ja: "非ページ プール", pt: "Pool não paginado", zh: "非分页池").into(), tf!("{} МБ", "{} MB", ja: "{} MB", pt: "{} MB", zh: "{} MB", dec(m.nonpaged as f64 / 1_048_576.0, 0))),
                     ],
                     stat_cols: 2,
                     facts,
-                    composition: Some((tf!("Состав памяти: {}", "Memory composition: {}", ja: "メモリの構成: {}", pt: "Composição da memória: {}", parts.join(" · ")), seg)),
+                    composition: Some((tf!("Состав памяти: {}", "Memory composition: {}", ja: "メモリの構成: {}", pt: "Composição da memória: {}", zh: "内存构成：{}", parts.join(" · ")), seg)),
                 });
             }
 
@@ -668,34 +671,34 @@ pub fn perf_items(d: &Data) -> Vec<PerfItem<'_>> {
                     ("", b) => b.to_string(),
                     (k, b) => format!("{k} ({b})"),
                 };
-                let title = tf!("Диск {} ({})", "Disk {} ({})", ja: "ディスク {} ({})", pt: "Disco {} ({})", dk.number, dk.letters.trim());
+                let title = tf!("Диск {} ({})", "Disk {} ({})", ja: "ディスク {} ({})", pt: "Disco {} ({})", zh: "磁盘 {}（{}）", dk.number, dk.letters.trim());
                 let xfer_max = dk.s_rd.iter().chain(dk.s_wr.iter()).cloned().fold(1.0f32, f32::max) * 1.15;
                 let system = dk.letters.to_uppercase().contains("C:");
                 v.push(PerfItem {
                     kind,
                     title: title.clone(),
-                    line1: if info.kind.is_empty() { t!("Локальный диск", "Local disk", ja: "ローカル ディスク", pt: "Disco local").into() } else { kind_txt.clone() },
+                    line1: if info.kind.is_empty() { t!("Локальный диск", "Local disk", ja: "ローカル ディスク", pt: "Disco local", zh: "本地磁盘").into() } else { kind_txt.clone() },
                     line2: format!("{:.0}%", dk.active),
                     graphs: vec![
-                        gspec(t!("Время активности", "Active time", ja: "アクティブな時間", pt: "Tempo ativo"), "100%", &dk.s_active, col(2), 100.0),
-                        GraphSpec { label: t!("Скорость передачи данных", "Transfer rate", ja: "転送速度", pt: "Taxa de transferência").into(), right: tf!("{} МБ/с", "{} MB/s", ja: "{} MB/秒", pt: "{} MB/s", dec(xfer_max as f64, 0)), series: vec![(&dk.s_rd, col(2)), (&dk.s_wr, col(2).lerp(Rgb(255, 255, 255), 0.45))], ymax: xfer_max },
+                        gspec(t!("Время активности", "Active time", ja: "アクティブな時間", pt: "Tempo ativo", zh: "活动时间"), "100%", &dk.s_active, col(2), 100.0),
+                        GraphSpec { label: t!("Скорость передачи данных", "Transfer rate", ja: "転送速度", pt: "Taxa de transferência", zh: "传输速率").into(), right: tf!("{} МБ/с", "{} MB/s", ja: "{} MB/秒", pt: "{} MB/s", zh: "{} MB/s", dec(xfer_max as f64, 0)), series: vec![(&dk.s_rd, col(2)), (&dk.s_wr, col(2).lerp(Rgb(255, 255, 255), 0.45))], ymax: xfer_max },
                     ],
                     layout: GLayout::Stack,
                     big_title: title,
                     device: model,
                     stats: vec![
-                        (t!("Время активности", "Active time", ja: "アクティブな時間", pt: "Tempo ativo").into(), format!("{:.0}%", dk.active)),
-                        (t!("Средний отклик", "Average response time", ja: "平均応答時間", pt: "Tempo médio de resposta").into(), tf!("{} мс", "{} ms", ja: "{} ms", pt: "{} ms", dec(dk.ms as f64, 1))),
-                        (t!("Скорость чтения", "Read speed", ja: "読み取り速度", pt: "Velocidade de leitura").into(), ms(dk.rd)),
-                        (t!("Скорость записи", "Write speed", ja: "書き込み速度", pt: "Velocidade de gravação").into(), ms(dk.wr)),
+                        (t!("Время активности", "Active time", ja: "アクティブな時間", pt: "Tempo ativo", zh: "活动时间").into(), format!("{:.0}%", dk.active)),
+                        (t!("Средний отклик", "Average response time", ja: "平均応答時間", pt: "Tempo médio de resposta", zh: "平均响应时间").into(), tf!("{} мс", "{} ms", ja: "{} ms", pt: "{} ms", zh: "{} ms", dec(dk.ms as f64, 1))),
+                        (t!("Скорость чтения", "Read speed", ja: "読み取り速度", pt: "Velocidade de leitura", zh: "读取速度").into(), ms(dk.rd)),
+                        (t!("Скорость записи", "Write speed", ja: "書き込み速度", pt: "Velocidade de gravação", zh: "写入速度").into(), ms(dk.wr)),
                     ],
                     stat_cols: 2,
                     facts: vec![
-                        (t!("Ёмкость:", "Capacity:", ja: "容量:", pt: "Capacidade:").into(), gb(info.capacity.max(dk.formatted))),
-                        (t!("Форматированный объём:", "Formatted:", ja: "フォーマット済み:", pt: "Formatada:").into(), gb(dk.formatted)),
-                        (t!("Системный диск:", "System disk:", ja: "システム ディスク:", pt: "Disco do sistema:").into(), if system { t!("Да", "Yes", ja: "はい", pt: "Sim") } else { t!("Нет", "No", ja: "いいえ", pt: "Não") }.into()),
-                        (t!("Файл подкачки:", "Page file:", ja: "ページ ファイル:", pt: "Arquivo de paginação:").into(), if system { t!("Да", "Yes", ja: "はい", pt: "Sim") } else { t!("Нет", "No", ja: "いいえ", pt: "Não") }.into()),
-                        (t!("Тип:", "Type:", ja: "種類:", pt: "Tipo:").into(), kind_txt),
+                        (t!("Ёмкость:", "Capacity:", ja: "容量:", pt: "Capacidade:", zh: "容量：").into(), gb(info.capacity.max(dk.formatted))),
+                        (t!("Форматированный объём:", "Formatted:", ja: "フォーマット済み:", pt: "Formatada:", zh: "已格式化：").into(), gb(dk.formatted)),
+                        (t!("Системный диск:", "System disk:", ja: "システム ディスク:", pt: "Disco do sistema:", zh: "系统盘：").into(), if system { t!("Да", "Yes", ja: "はい", pt: "Sim", zh: "是") } else { t!("Нет", "No", ja: "いいえ", pt: "Não", zh: "否") }.into()),
+                        (t!("Файл подкачки:", "Page file:", ja: "ページ ファイル:", pt: "Arquivo de paginação:", zh: "页面文件：").into(), if system { t!("Да", "Yes", ja: "はい", pt: "Sim", zh: "是") } else { t!("Нет", "No", ja: "いいえ", pt: "Não", zh: "否") }.into()),
+                        (t!("Тип:", "Type:", ja: "種類:", pt: "Tipo:", zh: "类型：").into(), kind_txt),
                     ],
                     composition: None,
                 });
@@ -711,14 +714,14 @@ pub fn perf_items(d: &Data) -> Vec<PerfItem<'_>> {
                     kind,
                     title: title.clone(),
                     line1: conn.into(),
-                    line2: tf!("О: {} П: {} Кбит/с", "S: {} R: {} Kbps", ja: "送: {} 受: {} Kbps", pt: "E: {} R: {} Kbps", tx as i64, rx as i64),
-                    graphs: vec![GraphSpec { label: t!("Пропускная способность", "Throughput", ja: "スループット", pt: "Taxa de transferência").into(), right: tf!("{} Кбит/с", "{} Kbps", ja: "{} Kbps", pt: "{} Kbps", ymax as i64), series: vec![(&n.s_rx, col(3)), (&n.s_tx, col(3).lerp(Rgb(255, 255, 255), 0.4))], ymax }],
+                    line2: tf!("О: {} П: {} Кбит/с", "S: {} R: {} Kbps", ja: "送: {} 受: {} Kbps", pt: "E: {} R: {} Kbps", zh: "发送：{} 接收：{} Kbps", tx as i64, rx as i64),
+                    graphs: vec![GraphSpec { label: t!("Пропускная способность", "Throughput", ja: "スループット", pt: "Taxa de transferência", zh: "吞吐量").into(), right: tf!("{} Кбит/с", "{} Kbps", ja: "{} Kbps", pt: "{} Kbps", zh: "{} Kbps", ymax as i64), series: vec![(&n.s_rx, col(3)), (&n.s_tx, col(3).lerp(Rgb(255, 255, 255), 0.4))], ymax }],
                     layout: GLayout::Single,
                     big_title: title,
                     device: n.name.clone(),
-                    stats: vec![(t!("Отправка", "Send", ja: "送信", pt: "Enviar").into(), tf!("{} Кбит/с", "{} Kbps", ja: "{} Kbps", pt: "{} Kbps", tx as i64)), (t!("Получение", "Receive", ja: "受信", pt: "Receber").into(), tf!("{} Кбит/с", "{} Kbps", ja: "{} Kbps", pt: "{} Kbps", rx as i64))],
+                    stats: vec![(t!("Отправка", "Send", ja: "送信", pt: "Enviar", zh: "发送").into(), tf!("{} Кбит/с", "{} Kbps", ja: "{} Kbps", pt: "{} Kbps", zh: "{} Kbps", tx as i64)), (t!("Получение", "Receive", ja: "受信", pt: "Receber", zh: "接收").into(), tf!("{} Кбит/с", "{} Kbps", ja: "{} Kbps", pt: "{} Kbps", zh: "{} Kbps", rx as i64))],
                     stat_cols: 2,
-                    facts: vec![(t!("Имя адаптера:", "Adapter name:", ja: "アダプター名:", pt: "Nome do adaptador:").into(), n.name.clone()), (t!("Тип подключения:", "Connection type:", ja: "接続の種類:", pt: "Tipo de conexão:").into(), conn.into()), (t!("Скорость канала:", "Link speed:", ja: "リンク速度:", pt: "Velocidade do link:").into(), tf!("{:.0} Мбит/с", "{:.0} Mbps", ja: "{:.0} Mbps", pt: "{:.0} Mbps", n.bw / 1e6))],
+                    facts: vec![(t!("Имя адаптера:", "Adapter name:", ja: "アダプター名:", pt: "Nome do adaptador:", zh: "适配器名称：").into(), n.name.clone()), (t!("Тип подключения:", "Connection type:", ja: "接続の種類:", pt: "Tipo de conexão:", zh: "连接类型：").into(), conn.into()), (t!("Скорость канала:", "Link speed:", ja: "リンク速度:", pt: "Velocidade do link:", zh: "链接速度：").into(), tf!("{:.0} Мбит/с", "{:.0} Mbps", ja: "{:.0} Mbps", pt: "{:.0} Mbps", zh: "{:.0} Mbps", n.bw / 1e6))],
                     composition: None,
                 });
             }
@@ -742,30 +745,30 @@ pub fn perf_items(d: &Data) -> Vec<PerfItem<'_>> {
                     },
                     graphs: vec![
                         gspec("3D", "100%", &g.series.g3d, col(4), 100.0),
-                        gspec(t!("Копирование", "Copy", ja: "コピー", pt: "Copiar"), "100%", &g.series.gcopy, col(4), 100.0),
-                        gspec(t!("Видеокодирование", "Video encode", ja: "ビデオ エンコード", pt: "Codificação de vídeo"), "100%", &g.series.genc, col(4), 100.0),
-                        gspec(t!("Видеодекодирование", "Video decode", ja: "ビデオ デコード", pt: "Decodificação de vídeo"), "100%", &g.series.gdec, col(4), 100.0),
-                        gspec(t!("Использование выделенной памяти GPU", "Dedicated GPU memory usage", ja: "専用 GPU メモリ使用量", pt: "Uso de memória dedicada da GPU"), &gb(vram), &g.series.ded, col(4), vram_mb),
-                        gspec(t!("Использование общей памяти GPU", "Shared GPU memory usage", ja: "共有 GPU メモリ使用量", pt: "Uso de memória compartilhada da GPU"), &gb(shared_total), &g.series.shr, col(4), (shared_total >> 20).max(1) as f32),
+                        gspec(t!("Копирование", "Copy", ja: "コピー", pt: "Copiar", zh: "复制"), "100%", &g.series.gcopy, col(4), 100.0),
+                        gspec(t!("Видеокодирование", "Video encode", ja: "ビデオ エンコード", pt: "Codificação de vídeo", zh: "视频编码"), "100%", &g.series.genc, col(4), 100.0),
+                        gspec(t!("Видеодекодирование", "Video decode", ja: "ビデオ デコード", pt: "Decodificação de vídeo", zh: "视频解码"), "100%", &g.series.gdec, col(4), 100.0),
+                        gspec(t!("Использование выделенной памяти GPU", "Dedicated GPU memory usage", ja: "専用 GPU メモリ使用量", pt: "Uso de memória dedicada da GPU", zh: "专用 GPU 内存使用量"), &gb(vram), &g.series.ded, col(4), vram_mb),
+                        gspec(t!("Использование общей памяти GPU", "Shared GPU memory usage", ja: "共有 GPU メモリ使用量", pt: "Uso de memória compartilhada da GPU", zh: "共享 GPU 内存使用量"), &gb(shared_total), &g.series.shr, col(4), (shared_total >> 20).max(1) as f32),
                     ],
                     layout: GLayout::Grid,
                     big_title: title,
                     device: name.clone(),
                     stats: vec![
-                        (t!("Использование", "Utilization", ja: "使用率", pt: "Utilização").into(), format!("{:.0}%", g.util)),
-                        (t!("Общая память GPU", "Shared GPU memory", ja: "共有 GPU メモリ", pt: "Memória compartilhada da GPU").into(), format!("{}/{}", dec(g.shr_used as f64 / 1_073_741_824.0, 1), gb(shared_total))),
-                        (t!("Память GPU", "GPU memory", ja: "GPU メモリ", pt: "Memória da GPU").into(), format!("{}/{}", dec((g.ded_used + g.shr_used) as f64 / 1_073_741_824.0, 1), gb(vram + shared_total))),
-                        (t!("Температура GPU", "GPU temperature", ja: "GPU 温度", pt: "Temperatura da GPU").into(), temp.clone().unwrap_or_else(|| "—".into())),
+                        (t!("Использование", "Utilization", ja: "使用率", pt: "Utilização", zh: "利用率").into(), format!("{:.0}%", g.util)),
+                        (t!("Общая память GPU", "Shared GPU memory", ja: "共有 GPU メモリ", pt: "Memória compartilhada da GPU", zh: "共享 GPU 内存").into(), format!("{}/{}", dec(g.shr_used as f64 / 1_073_741_824.0, 1), gb(shared_total))),
+                        (t!("Память GPU", "GPU memory", ja: "GPU メモリ", pt: "Memória da GPU", zh: "GPU 内存").into(), format!("{}/{}", dec((g.ded_used + g.shr_used) as f64 / 1_073_741_824.0, 1), gb(vram + shared_total))),
+                        (t!("Температура GPU", "GPU temperature", ja: "GPU 温度", pt: "Temperatura da GPU", zh: "GPU 温度").into(), temp.clone().unwrap_or_else(|| "—".into())),
                     ],
                     stat_cols: 2,
                     facts: {
                         let dash = |s: &str| if s.is_empty() { "—".to_string() } else { s.to_string() };
                         vec![
-                            (t!("Выделенная память GPU:", "Dedicated GPU memory:", ja: "専用 GPU メモリ:", pt: "Memória dedicada da GPU:").into(), format!("{}/{}", dec(g.ded_used as f64 / 1_073_741_824.0, 1), gb(vram))),
-                            (t!("Версия драйвера:", "Driver version:", ja: "ドライバーのバージョン:", pt: "Versão do driver:").into(), dash(&g.reg.driver_version)),
-                            (t!("Дата разработки:", "Driver date:", ja: "ドライバーの日付:", pt: "Data do driver:").into(), if g.reg.driver_date.is_empty() { "—".into() } else { ru_date(&g.reg.driver_date) }),
-                            (t!("Версия DirectX:", "DirectX version:", ja: "DirectX のバージョン:", pt: "Versão do DirectX:").into(), dash(&a.dx)),
-                            (t!("Физическое расположение:", "Physical location:", ja: "物理的な場所:", pt: "Local físico:").into(), dash(&a.location)),
+                            (t!("Выделенная память GPU:", "Dedicated GPU memory:", ja: "専用 GPU メモリ:", pt: "Memória dedicada da GPU:", zh: "专用 GPU 内存：").into(), format!("{}/{}", dec(g.ded_used as f64 / 1_073_741_824.0, 1), gb(vram))),
+                            (t!("Версия драйвера:", "Driver version:", ja: "ドライバーのバージョン:", pt: "Versão do driver:", zh: "驱动程序版本：").into(), dash(&g.reg.driver_version)),
+                            (t!("Дата разработки:", "Driver date:", ja: "ドライバーの日付:", pt: "Data do driver:", zh: "驱动程序日期：").into(), if g.reg.driver_date.is_empty() { "—".into() } else { ru_date(&g.reg.driver_date) }),
+                            (t!("Версия DirectX:", "DirectX version:", ja: "DirectX のバージョン:", pt: "Versão do DirectX:", zh: "DirectX 版本：").into(), dash(&a.dx)),
+                            (t!("Физическое расположение:", "Physical location:", ja: "物理的な場所:", pt: "Local físico:", zh: "物理位置：").into(), dash(&a.location)),
                         ]
                     },
                     composition: None,

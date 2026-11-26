@@ -104,9 +104,9 @@ fn title(hwnd: HWND) {
         (Some(p), img) => {
             let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             let size = img.as_ref().map_or(String::new(), |i| format!("  {}x{}", i.w, i.h));
-            format!("{name}  ({}/{}){size}  - Photo viewer", a.idx + 1, a.files.len())
+            format!("{name}  ({}/{}){size}  - {}", a.idx + 1, a.files.len(), winrust_common::t!("Просмотр фото", "Photo viewer", ja: "フォト ビューアー", pt: "Visualizador de fotos", zh: "图片查看器"))
         }
-        _ => "Photo viewer".into(),
+        _ => winrust_common::t!("Просмотр фото", "Photo viewer", ja: "フォト ビューアー", pt: "Visualizador de fotos", zh: "图片查看器").into(),
     });
     unsafe { SetWindowTextW(hwnd, wide(&t).as_ptr()) };
 }
@@ -136,7 +136,7 @@ unsafe fn paint(hwnd: HWND) {
                 SetBkMode(mem, TRANSPARENT as _);
                 SetTextColor(mem, 0x93_8e_8e);
                 let mut r = rc;
-                let t = wide(if a.files.is_empty() { "Open a picture with this program, or drop one here" } else { &a.note });
+                let t = wide(if a.files.is_empty() { winrust_common::t!("Откройте фото этой программой или перетащите его сюда", "Open a picture with this program, or drop one here", ja: "このプログラムで画像を開くか、ここにドロップしてください", pt: "Abra uma imagem com este programa ou solte uma aqui", zh: "用它打开一张图片，或把图片拖到这里") } else { &a.note });
                 DrawTextW(mem, t.as_ptr(), -1, &mut r, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
             }
         });
@@ -202,7 +202,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 if g == GEN.load(Relaxed) {
                     APP.with_borrow_mut(|a| match r {
                         Ok(i) => (a.img, a.note) = (Some(i), String::new()),
-                        Err(e) => (a.img, a.note) = (None, format!("Cannot open this picture: {e}")),
+                        Err(e) => (a.img, a.note) = (None, winrust_common::tf!("Не удалось открыть это изображение: {}", "Cannot open this picture: {}", ja: "この画像を開けません: {}", pt: "Não foi possível abrir esta imagem: {}", zh: "无法打开这张图片：{}", e)),
                     });
                     InvalidateRect(hwnd, null(), 0);
                     title(hwnd);
@@ -288,7 +288,7 @@ fn main() {
         let (inst, class) = (GetModuleHandleW(null()), wide("WinRustPhoto"));
         let wc = WNDCLASSW { style: CS_DBLCLKS, lpfnWndProc: Some(proc), cbClsExtra: 0, cbWndExtra: 0, hInstance: inst, hIcon: null_mut(), hCursor: LoadCursorW(null_mut(), IDC_ARROW), hbrBackground: null_mut(), lpszMenuName: null(), lpszClassName: class.as_ptr() };
         RegisterClassW(&wc);
-        let hwnd = CreateWindowExW(0, class.as_ptr(), wide("Photo viewer").as_ptr(), WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT, 1280, 800, null_mut(), null_mut(), inst, null());
+        let hwnd = CreateWindowExW(0, class.as_ptr(), wide(winrust_common::t!("Просмотр фото", "Photo viewer", ja: "フォト ビューアー", pt: "Visualizador de fotos", zh: "图片查看器")).as_ptr(), WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT, 1280, 800, null_mut(), null_mut(), inst, null());
         if let Some(p) = std::env::args_os().nth(1) {
             open(hwnd, Path::new(&p));
         }

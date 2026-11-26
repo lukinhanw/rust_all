@@ -20,11 +20,11 @@ struct Source {
 }
 
 static SOURCES: std::sync::LazyLock<[Source; 5]> = std::sync::LazyLock::new(|| [
-    Source { label: t!("Реестр, текущий пользователь", "Registry, current user", ja: "レジストリ (現在のユーザー)", pt: "Registro, usuário atual"), hklm: false, run: Some(RUN), approved: "Run" },
-    Source { label: t!("Реестр, все пользователи", "Registry, all users", ja: "レジストリ (全ユーザー)", pt: "Registro, todos os usuários"), hklm: true, run: Some(RUN), approved: "Run" },
-    Source { label: t!("Реестр, все пользователи (32-бит)", "Registry, all users (32-bit)", ja: "レジストリ (全ユーザー、32 ビット)", pt: "Registro, todos os usuários (32 bits)"), hklm: true, run: Some(RUN32), approved: "Run32" },
-    Source { label: t!("Папка автозагрузки (пользователь)", "Startup folder (user)", ja: "スタートアップ フォルダー (ユーザー)", pt: "Pasta Inicializar (usuário)"), hklm: false, run: None, approved: "StartupFolder" },
-    Source { label: t!("Папка автозагрузки (все)", "Startup folder (all users)", ja: "スタートアップ フォルダー (全ユーザー)", pt: "Pasta Inicializar (todos os usuários)"), hklm: true, run: None, approved: "StartupFolder" },
+    Source { label: t!("Реестр, текущий пользователь", "Registry, current user", ja: "レジストリ (現在のユーザー)", pt: "Registro, usuário atual", zh: "注册表，当前用户"), hklm: false, run: Some(RUN), approved: "Run" },
+    Source { label: t!("Реестр, все пользователи", "Registry, all users", ja: "レジストリ (全ユーザー)", pt: "Registro, todos os usuários", zh: "注册表，所有用户"), hklm: true, run: Some(RUN), approved: "Run" },
+    Source { label: t!("Реестр, все пользователи (32-бит)", "Registry, all users (32-bit)", ja: "レジストリ (全ユーザー、32 ビット)", pt: "Registro, todos os usuários (32 bits)", zh: "注册表，所有用户（32 位）"), hklm: true, run: Some(RUN32), approved: "Run32" },
+    Source { label: t!("Папка автозагрузки (пользователь)", "Startup folder (user)", ja: "スタートアップ フォルダー (ユーザー)", pt: "Pasta Inicializar (usuário)", zh: "启动文件夹（当前用户）"), hklm: false, run: None, approved: "StartupFolder" },
+    Source { label: t!("Папка автозагрузки (все)", "Startup folder (all users)", ja: "スタートアップ フォルダー (全ユーザー)", pt: "Pasta Inicializar (todos os usuários)", zh: "启动文件夹（所有用户）"), hklm: true, run: None, approved: "StartupFolder" },
 ]);
 
 pub struct Item {
@@ -42,8 +42,8 @@ pub const SERVICE: usize = 6;
 impl Item {
     pub fn source_label(&self) -> &'static str {
         match self.source {
-            TASK => t!("Планировщик заданий (при входе или загрузке)", "Task Scheduler (at sign-in or boot)", ja: "タスク スケジューラ (サインイン時または起動時)", pt: "Agendador de Tarefas (no logon ou na inicialização)"),
-            SERVICE => t!("Служба с автозапуском (отключение = запуск вручную)", "Auto-start service (disabling = manual start)", ja: "自動開始サービス (無効にすると手動開始)", pt: "Serviço de início automático (desativar = início manual)"),
+            TASK => t!("Планировщик заданий (при входе или загрузке)", "Task Scheduler (at sign-in or boot)", ja: "タスク スケジューラ (サインイン時または起動時)", pt: "Agendador de Tarefas (no logon ou na inicialização)", zh: "任务计划程序（登录或启动时）"),
+            SERVICE => t!("Служба с автозапуском (отключение = запуск вручную)", "Auto-start service (disabling = manual start)", ja: "自動開始サービス (無効にすると手動開始)", pt: "Serviço de início automático (desativar = início manual)", zh: "自动启动服务（禁用 = 手动启动）"),
             i => SOURCES[i].label,
         }
     }

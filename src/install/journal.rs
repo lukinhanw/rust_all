@@ -42,7 +42,7 @@ impl Journal {
         let path = self.0.display();
         let text = fs::read_to_string(&self.0).map_err(|e| format!("{path}: {e}"))?;
         i18n::journal::parse_all(&text)
-            .map_err(|line| tf!("{path}: повреждена строка журнала {line}", "{path}: invalid journal record on line {line}", ja: "{path}: {line} 行目のジャーナル レコードが無効です", pt: "{path}: registro de diário inválido na linha {line}"))
+            .map_err(|line| tf!("{path}: повреждена строка журнала {line}", "{path}: invalid journal record on line {line}", ja: "{path}: {line} 行目のジャーナル レコードが無効です", pt: "{path}: registro de diário inválido na linha {line}", zh: "{path}：第 {line} 行的日志记录无效"))
     }
 
     /// Writes `e` down before the change it describes; a value already in the journal keeps its original.
@@ -50,7 +50,7 @@ impl Journal {
         if self.entries()?.iter().any(|x| x.same(&e)) {
             return Ok(());
         }
-        let line = e.line().ok_or(tf!("не могу сохранить старое значение: {e:?}", "cannot save the old value: {e:?}", ja: "古い値を保存できません: {e:?}", pt: "não foi possível salvar o valor antigo: {e:?}"))?;
+        let line = e.line().ok_or(tf!("не могу сохранить старое значение: {e:?}", "cannot save the old value: {e:?}", ja: "古い値を保存できません: {e:?}", pt: "não foi possível salvar o valor antigo: {e:?}", zh: "无法保存旧值：{e:?}"))?;
         let mut f = fs::OpenOptions::new().append(true).open(&self.0).map_err(|e| format!("{}: {e}", self.0.display()))?;
         writeln!(f, "{line}").and_then(|_| f.sync_all()).map_err(|e| format!("{}: {e}", self.0.display()))
     }
@@ -62,7 +62,7 @@ impl Journal {
 
     pub(crate) fn set_svc(&self, name: &str, mode: &str) -> Result<(), String> {
         let k = svc_key(name);
-        let old = svc_mode(reg_dword(&k, "Start"), reg_dword(&k, "DelayedAutostart")).ok_or(tf!("служба {name}: неизвестный тип запуска", "service {name}: unknown start type", ja: "サービス {name}: 開始の種類が不明です", pt: "serviço {name}: tipo de início desconhecido"))?;
+        let old = svc_mode(reg_dword(&k, "Start"), reg_dword(&k, "DelayedAutostart")).ok_or(tf!("служба {name}: неизвестный тип запуска", "service {name}: unknown start type", ja: "サービス {name}: 開始の種類が不明です", pt: "serviço {name}: tipo de início desconhecido", zh: "服务 {name}：未知的启动类型"))?;
         self.record(Entry::Svc { name: name.into(), mode: old.into() })?;
         run("sc.exe", &["config", name, "start=", mode])
     }

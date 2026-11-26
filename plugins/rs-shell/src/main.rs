@@ -230,7 +230,7 @@ fn supervise() {
 /// Run key, so it can live in a folder the user owns (Windows stopped starting our own shell at logon).
 /// The rust-explorer plugin's "replace Explorer" switch (HKCU\Software\rs-shell\ReplaceExplorer = 1).
 fn replace_on() -> bool {
-    reg(&["query", r"HKCU\Software\rs-shell", "/v", "ReplaceExplorer"]).is_some_and(|o| o.contains("0x1"))
+    winrust_common::reg::get_dword(r"HKCU\Software\rs-shell", "ReplaceExplorer") == Some(1)
 }
 
 /// Ends the Explorer that runs as the shell (started without arguments). Folder windows (started with a path) and the COM
@@ -244,13 +244,20 @@ fn kill_shell_explorer() {
 /// no longer write them, and the overlay then waited forever. Explorer gets through the autostart well within this.
 const AUTOSTART_GRACE: Duration = Duration::from_secs(90);
 
-/// True once Explorer has started this session's Run keys and Startup folder. The overlay starts at logon (a scheduled task),
-/// before Explorer gets to them: ending Explorer earlier would lose the user's autostart apps.
+/// How long Explorer must have started no new program before it may go. It starts the autostart one program at a time,
+/// about a second apart (up to 4 s between the Run keys and the Startup folder on a Windows 10 PC).
+const AUTOSTART_QUIET: Duration = Duration::from_secs(8);
+
+/// True once Explorer has begun this session's Run keys and Startup folder. The overlay starts at logon (a scheduled task),
+/// before Explorer gets to them: ending Explorer earlier would lose the user's autostart apps. Explorer writes each marker
+/// just before its pass, not after it (StartupHasBeenRun 30 ms before the first Startup folder app), so a marker alone
+/// does not mean the programs are running: `may_end_explorer` also waits until Explorer stops starting new ones.
 fn startup_run() -> bool {
     let mut sid = 0;
     unsafe { windows_sys::Win32::System::RemoteDesktop::ProcessIdToSessionId(std::process::id(), &mut sid) };
     let k = format!(r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\SessionInfo\{sid}");
-    ["RunStuffHasBeenRun", "StartupHasBeenRun"].iter().all(|n| reg(&["query", &format!(r"{k}\{n}")]).is_some())
+    // read in place: this runs every 3 s during logon (it started two reg.exe processes each time)
+    ["RunStuffHasBeenRun", "StartupHasBeenRun"].iter().all(|n| winrust_common::reg::exists(&format!(r"{k}\{n}"), None))
 }
 
 /// What Explorer's autostart should leave running: the exe names (lowercase) of the entries we can recognise, and how many
@@ -281,9 +288,18 @@ fn missing_autostart<'a>(expected: &'a [String], running: &[(u32, String)]) -> V
 /// Explorer may go once it has started the autostart: its markers say so (older builds), or every program we expect is
 /// running and Explorer had its startup delay (~10 s; 30 s when there are entries we cannot watch, such as Startup
 /// folder shortcuts, which it runs in the same pass), or the grace time ran out (an app that starts and quits at once).
-fn may_end_explorer(markers: bool, since_start: Duration, all_running: bool, untracked: usize) -> bool {
+/// In every case Explorer must have started nothing new for `quiet`: ending it in the middle of a pass loses the rest (#159).
+fn may_end_explorer(markers: bool, since_start: Duration, all_running: bool, untracked: usize, quiet: Duration) -> bool {
     let settle = Duration::from_secs(if untracked > 0 { 30 } else { 15 });
-    markers || since_start >= AUTOSTART_GRACE || (all_running && since_start >= settle)
+    quiet >= AUTOSTART_QUIET && (markers || since_start >= AUTOSTART_GRACE || (all_running && since_start >= settle))
+}
+
+/// When Explorer last started a program: `kids` are its children now, `seen` the ones of the last look. Returns the
+/// new `last` (now if a child is new) and keeps `kids` as the next `seen`.
+fn last_start(seen: &mut Vec<u32>, kids: Vec<u32>, last: Instant, now: Instant) -> Instant {
+    let new = kids.iter().any(|k| !seen.contains(k));
+    *seen = kids;
+    if new { now } else { last }
 }
 
 /// Gives the user Explorer back (with a normal, not elevated, token: the shell must never run elevated).
@@ -323,22 +339,28 @@ fn overlay_watch(replace: bool, desktop: PathBuf, up: impl Fn() -> bool) {
     // newer builds write no markers: watch for the autostart programs themselves instead of always waiting the full grace
     let (expected, untracked) = if replace { expected_autostart(&autostart()) } else { (vec![], 0) };
     if replace { log(&format!("autostart to wait for: {} exe(s) {:?}, {} other entr(ies)", expected.len(), expected, untracked)); }
+    // what the shell Explorer has started so far, and when it last started something (Startup folder shortcuts and Store
+    // apps' startup tasks are its children too, even though we cannot name them in advance)
+    let (mut kids, mut last) = (vec![], began);
     loop {
         thread::sleep(Duration::from_secs(3));
         if replace && !killed {
             // both our surfaces must be on screen before the system's one goes away
             stable = if bar_up() && up() { stable + 1 } else { 0 };
             let missing = missing_autostart(&expected, &winrust_common::proc::list());
-            if stable >= 3 && may_end_explorer(startup_run(), began.elapsed(), missing.is_empty(), untracked) {
-                log(&format!("autostart done (markers: {}, after {} s, not running: {:?})", startup_run(), began.elapsed().as_secs(), missing));
+            last = last_start(&mut kids, winrust_common::proc::children(&winrust_common::proc::shell_explorers()), last, Instant::now());
+            if stable >= 3 && may_end_explorer(startup_run(), began.elapsed(), missing.is_empty(), untracked, last.elapsed()) {
+                log(&format!("autostart done (markers: {}, after {} s, last start {} s ago, not running: {:?})", startup_run(), began.elapsed().as_secs(), last.elapsed().as_secs(), missing));
                 kill_shell_explorer();
                 killed = true;
             }
         }
         // after we ended Explorer, a shell Explorer is back only because Settings needs it (common/src/settings.rs ends our
         // desktop for that and brings it back when Settings closes): a desktop raised under it leaves Store apps cloaked
-        let lent = replace && killed && !winrust_common::proc::shell_explorers().is_empty();
-        dmiss = if desktop.exists() && !up() && !lent { dmiss + 1 } else { 0 };
+        // asked only when the desktop is missing: a process snapshot plus a PEB read per explorer.exe every 3 s was for nothing
+        // the marker first: Settings sets it before it ends our desktop, so the gap until Explorer shows up is covered too
+        let lent = || winrust_common::settings::explorer_lent() || (replace && killed && !winrust_common::proc::shell_explorers().is_empty());
+        dmiss = if desktop.exists() && !up() && !lent() { dmiss + 1 } else { 0 };
         if dmiss >= 2 { log(&format!("desktop respawn -> {:?}", quiet(&desktop).arg("--desktop").spawn().map(|_| ()))); dmiss = 0; }
         if bar_up() { misses = 0; continue; }
         misses += 1;
@@ -363,7 +385,9 @@ fn bootstrap() -> bool {
     let Ok(base) = std::env::var("LOCALAPPDATA") else { return false };
     let real = PathBuf::from(base).join(r"plugin-launcher\bin\rs-shell.exe");
     let me = std::env::current_exe().and_then(|p| p.canonicalize()).ok();
-    if !real.exists() || real.canonicalize().ok() == me {
+    let age = |p: &PathBuf| p.metadata().and_then(|m| m.modified()).ok();
+    // an older user copy is a leftover (nothing writes there any more): the installed shell runs itself
+    if !real.exists() || real.canonicalize().ok() == me || age(&real) < std::env::current_exe().ok().as_ref().and_then(age) {
         return false;
     }
     let t = Instant::now();
@@ -419,15 +443,33 @@ mod tests {
     use std::time::Duration;
     #[test]
     fn ends_explorer_on_markers_or_after_grace() {
-        let s = Duration::from_secs;
-        assert!(may_end_explorer(true, Duration::ZERO, false, 0));
-        assert!(!may_end_explorer(false, s(30), false, 0)); // something still missing
-        assert!(may_end_explorer(false, s(90), false, 3)); // grace over, whatever is missing
+        let (s, q) = (Duration::from_secs, Duration::from_secs(8)); // q: Explorer has started nothing new for 8 s
+        assert!(may_end_explorer(true, s(9), false, 0, q));
+        assert!(!may_end_explorer(false, s(30), false, 0, q)); // something still missing
+        assert!(may_end_explorer(false, s(90), false, 3, q)); // grace over, whatever is missing
         // everything we watch is running: after Explorer's startup delay, longer with shortcuts we cannot watch
-        assert!(!may_end_explorer(false, s(9), true, 0));
-        assert!(may_end_explorer(false, s(15), true, 0));
-        assert!(!may_end_explorer(false, s(20), true, 1));
-        assert!(may_end_explorer(false, s(30), true, 1));
+        assert!(!may_end_explorer(false, s(9), true, 0, q));
+        assert!(may_end_explorer(false, s(15), true, 0, q));
+        assert!(!may_end_explorer(false, s(20), true, 1, q));
+        assert!(may_end_explorer(false, s(30), true, 1, q));
+    }
+    #[test]
+    fn waits_while_explorer_still_starts_programs() {
+        // #159: the markers are written before Explorer starts the programs; ending it then lost the rest of the pass
+        let recent = Duration::from_secs(2);
+        assert!(!may_end_explorer(true, Duration::from_secs(20), true, 0, recent));
+        assert!(!may_end_explorer(false, Duration::from_secs(90), false, 0, recent));
+        assert!(!may_end_explorer(false, Duration::from_secs(30), true, 1, recent));
+    }
+    #[test]
+    fn notices_each_program_explorer_starts() {
+        let t0 = std::time::Instant::now();
+        let (t1, t2, t3) = (t0 + Duration::from_secs(3), t0 + Duration::from_secs(6), t0 + Duration::from_secs(9));
+        let mut seen = vec![];
+        assert_eq!(super::last_start(&mut seen, vec![10, 11], t0, t1), t1); // the first look: everything is new
+        assert_eq!(super::last_start(&mut seen, vec![10, 11], t1, t2), t1); // nothing new
+        assert_eq!(super::last_start(&mut seen, vec![11], t1, t2), t1); // one quit: still nothing new
+        assert_eq!(super::last_start(&mut seen, vec![11, 12], t1, t3), t3); // a new one
     }
     #[test]
     fn watches_the_autostart_exes() {
