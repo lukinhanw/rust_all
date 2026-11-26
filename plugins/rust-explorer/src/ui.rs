@@ -68,12 +68,15 @@ thread_local! {
     static BRUSH: Cell<isize> = const { Cell::new(0) }; // address box background
 }
 
+/// The primary monitor's real scale, not the system DPI: that one is fixed at sign-in and stayed 125% after a 100%
+/// monitor became primary (menu and icons a quarter too big, icons blurry).
 pub fn init_scale() {
-    unsafe {
-        let dc = GetDC(ptr::null_mut());
-        SCALE.set(GetDeviceCaps(dc, LOGPIXELSX as i32) as f32 / 96.0);
-        ReleaseDC(ptr::null_mut(), dc);
-    }
+    SCALE.set(winrust_common::dpi::primary() as f32 / 96.0);
+}
+
+/// The primary monitor's scale is no longer the one every size here was made with.
+pub fn scale_stale() -> bool {
+    (SCALE.get() * 96.0).round() as u32 != winrust_common::dpi::primary()
 }
 
 pub fn sc(v: i32) -> i32 { (v as f32 * SCALE.get()).round() as i32 }

@@ -235,6 +235,8 @@ thread_local! {
     static BAR_T: Cell<u64> = const { Cell::new(0) };
     static DESK_T: Cell<u64> = const { Cell::new(0) }; // last moment the bar had a reason to stay on the desktop
     static SCALE: Cell<f32> = const { Cell::new(1.0) };
+    static START_DPI: Cell<u32> = const { Cell::new(96) }; // the primary monitor's real DPI when we started
+    static RELAUNCH: Cell<bool> = const { Cell::new(false) }; // the scale changed: start again once the bar is down
     static OLD_STATE: Cell<usize> = const { Cell::new(ABS_ALWAYSONTOP as usize) };
     static BAT: Cell<(i32, bool)> = const { Cell::new((-1, false)) }; // (percent or -1 = no battery, on AC)
     static VOL: Cell<(i32, bool)> = const { Cell::new((-1, false)) }; // (percent or -1 = unknown, muted)
@@ -2779,6 +2781,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 place(hwnd);
             }
         }
+        // another monitor became primary, or its scale changed in Settings: every size (fonts, icons, bar height) came
+        // from the old scale and Windows would stretch the bar, blurry. Start again with the new one.
+        WM_DISPLAYCHANGE | WM_SETTINGCHANGE if !RELAUNCH.get() && winrust_common::dpi::primary() != START_DPI.get() => {
+            RELAUNCH.set(true);
+            DestroyWindow(hwnd);
+        }
         WM_DISPLAYCHANGE => place(hwnd),
         WM_DESTROY => {
             let mut ab: APPBARDATA = zeroed();
@@ -2831,8 +2839,8 @@ fn main() {
             return;
         }
         // Atomic single-instance guard (FindWindow alone raced when two launchers started us at once); the handle lives until exit.
-        let m = windows_sys::Win32::System::Threading::CreateMutexW(null(), 0, wide("Local\\topbar-single").as_ptr());
-        if m.is_null() || GetLastError() == ERROR_ALREADY_EXISTS || !FindWindowW(wide("topbar").as_ptr(), null()).is_null() {
+        let m_guard = windows_sys::Win32::System::Threading::CreateMutexW(null(), 0, wide("Local\\topbar-single").as_ptr());
+        if m_guard.is_null() || GetLastError() == ERROR_ALREADY_EXISTS || !FindWindowW(wide("topbar").as_ptr(), null()).is_null() {
             return; // already running
         }
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
@@ -2853,6 +2861,7 @@ fn main() {
         let dc = GetDC(null_mut());
         SCALE.set(GetDeviceCaps(dc, LOGPIXELSX as i32) as f32 / 96.0);
         ReleaseDC(null_mut(), dc);
+        START_DPI.set(winrust_common::dpi::primary());
         SHOWN.set(std::fs::read_to_string(appdata_file("topbar-tray.txt")).ok().map(|s| s.lines().map(str::to_string).collect()));
         load_pins();
         fly::init(GetModuleHandleW(null()));
@@ -2915,6 +2924,10 @@ fn main() {
         while GetMessageW(&mut m, null_mut(), 0, 0) > 0 {
             TranslateMessage(&m);
             DispatchMessageW(&m);
+        }
+        if RELAUNCH.get() {
+            windows_sys::Win32::Foundation::CloseHandle(m_guard); // the new bar must get past the single-instance guard
+            winrust_common::dpi::relaunch();
         }
     }
 }

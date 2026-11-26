@@ -10,6 +10,7 @@ use std::{
 };
 
 pub mod desktop;
+pub mod dpi;
 pub mod fg;
 pub mod journal;
 pub mod mem;

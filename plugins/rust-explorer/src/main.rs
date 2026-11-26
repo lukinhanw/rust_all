@@ -1702,6 +1702,13 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                 0
             }
             // the bar came, went or changed size (it sets the work area), or the screen changed: the icon list follows
+            // another monitor became primary or its scale changed: fonts, icons and the menu were sized for the old one.
+            // A new desktop takes over (it waits for this window to go) and this one ends.
+            WM_SETTINGCHANGE | WM_DISPLAYCHANGE | 0x02E0 /* WM_DPICHANGED */ if desk() && ui::scale_stale() => {
+                winrust_common::dpi::relaunch();
+                std::process::exit(0);
+            }
+            0x02E0 if desk() => 0, // same scale: keep the window over every monitor, not the rect Windows suggests
             WM_SETTINGCHANGE | WM_DISPLAYCHANGE if desk() => {
                 if m == WM_DISPLAYCHANGE {
                     reload_wall(); // monitors came, went or changed resolution: each one gets its picture again
@@ -2036,6 +2043,13 @@ fn main() {
         RegisterClassW(&WNDCLASSW { lpfnWndProc: Some(proc), hInstance: inst, lpszClassName: cls.as_ptr(), hCursor: LoadCursorW(0 as _, IDC_ARROW), hIcon: LoadIconW(inst, 1 as _), hbrBackground: bg, ..std::mem::zeroed() });
         if desktop {
             DESKTOP.store(true, Relaxed);
+            // one desktop: after a scale change the old one is still closing; wait for it, and leave if it stays
+            let up = || !FindWindowW(w("Progman").as_ptr(), w("rs-desktop").as_ptr()).is_null();
+            for _ in 0..50 {
+                if !up() { break; }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            if up() { return; }
             // the whole screen: it paints the wallpaper too; the icon list sits above the bar (desk_top / desk_bottom)
             // class "Progman" like explorer's desktop, so Wallpaper Engine & co. find it; title "rs-desktop" tells it apart
             // from explorer's ("Program Manager") for rs-shell
