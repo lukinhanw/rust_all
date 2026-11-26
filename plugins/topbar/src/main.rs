@@ -1456,11 +1456,10 @@ fn layout(w: i32) -> Layout {
     let margin = (w - apps.0) + sc(8); // keep the button group centered and clear of both sides
     let n = BTNS.with_borrow(|b| b.len()) as i32 + LEAD; // + the search and Task View slots
     let bw = (((w - 2 * margin + gap) / n.max(1)) - gap).clamp(sc(16), sc(44 + [-6, 0, 8][i18n::style::bar_size() as usize % 3]));
-    // centered on search + Start + pins only: opening an unpinned window adds a button on the right instead of shifting Start left
-    let fixed = (PINS.with_borrow(|p| p.len()) as i32 + LEAD + 1).min(n);
-    // ...but never so far right that the windows' buttons run into the tray: then the whole row shifts left
-    let right_limit = w - margin - (n * (bw + gap) - gap);
-    let centered = (w - (fixed * (bw + gap) - gap)) / 2;
+    // the whole row is centered, open windows included, like the Windows 11 taskbar: each new button moves the group half a
+    // slot left (centering only search + Start + pins pushed a full bar of windows off to the right)
+    let right_limit = w - margin - (n * (bw + gap) - gap); // never into the tray
+    let centered = (w - (n * (bw + gap) - gap)) / 2;
     Layout { x0: if i18n::style::align_left() { 0 } else { centered }.min(right_limit).max(sc(GEAR_X.0 + GEAR_X.1 + 6)), bw, gap, power, apps, sys, clock } // clear of the gear
 }
 
