@@ -284,9 +284,10 @@ pub unsafe fn list_draw(lp: LPARAM) -> LRESULT {
                 let State { dir, rows, .. } = &mut *st;
                 let r = rows.get_mut(i)?;
                 if r.icon < 0 && !r.hdr { r.icon = icon_of(&dir.join(&r.name), r.dir); }
-                Some((r.name.clone(), r.dir, r.time, r.size, r.icon, r.hdr))
+                let cut = !r.hdr && crate::sh::is_cut(&dir.join(&r.name));
+                Some((r.name.clone(), r.dir, r.time, r.size, r.icon, r.hdr, cut))
             });
-            let Some((name, is_dir, time, size, icon, hdr)) = row else { return CDRF_DODEFAULT as isize };
+            let Some((name, is_dir, time, size, icon, hdr, cut)) = row else { return CDRF_DODEFAULT as isize };
             let mut r = RECT { left: LVIR_BOUNDS as i32, ..std::mem::zeroed() };
             SendMessageW(list, LVM_GETITEMRECT, i, &mut r as *mut _ as isize);
             let row_r = rc(0, r.top, cr.right, r.bottom);
@@ -322,7 +323,19 @@ pub unsafe fn list_draw(lp: LPARAM) -> LRESULT {
             let himl = SendMessageW(list, LVM_GETIMAGELIST, LVSIL_SMALL as usize, 0);
             let (mut iw, mut ih) = (0, 0);
             ImageList_GetIconSize(himl as _, &mut iw, &mut ih);
-            if icon >= 0 { ImageList_Draw(himl as _, icon, dc, x[0] + sc(16), (r.top + r.bottom - ih) / 2, ILD_TRANSPARENT); }
+            if icon >= 0 {
+                let (ix, iy) = (x[0] + sc(16), (r.top + r.bottom - ih) / 2);
+                if cut {
+                    // cut to the clipboard: the icon at half opacity, like Explorer
+                    let mut p: IMAGELISTDRAWPARAMS = std::mem::zeroed();
+                    p.cbSize = size_of::<IMAGELISTDRAWPARAMS>() as u32;
+                    (p.himl, p.i, p.hdcDst, p.x, p.y) = (himl as _, icon, dc, ix, iy);
+                    (p.rgbBk, p.rgbFg, p.fStyle, p.fState, p.Frame) = (CLR_NONE as u32, CLR_NONE as u32, ILD_TRANSPARENT, ILS_ALPHA, 110);
+                    ImageList_DrawIndirect(&p);
+                } else {
+                    ImageList_Draw(himl as _, icon, dc, ix, iy, ILD_TRANSPARENT);
+                }
+            }
             if FONTS.get().0 == 0 { FONTS.set((font(14, 400, ui_face()), font(13, 400, ui_face()))); }
             let (f_name, f_det) = FONTS.get();
             SetBkMode(dc, TRANSPARENT as i32);
@@ -330,7 +343,7 @@ pub unsafe fn list_draw(lp: LPARAM) -> LRESULT {
             let p = Path::new(&name);
             let hit_of_search = p.is_absolute(); // search hits are absolute paths: show the name, and where it lies in the type column
             let shown = if hit_of_search { p.file_name().map_or(name.clone(), |n| n.to_string_lossy().into_owned()) } else { name.clone() };
-            text(dc, &shown, rc(x[0] + sc(16) + iw + sc(12), r.top, x[1] - sc(8), r.bottom), pal().text, DT_LEFT);
+            text(dc, &shown, rc(x[0] + sc(16) + iw + sc(12), r.top, x[1] - sc(8), r.bottom), if cut { mix(pal().text, listbg(), 0.45) } else { pal().text }, DT_LEFT);
             SelectObject(dc, f_det as HFONT);
             let dim = if sel { mix(pal().dim, pal().text, 0.45) } else { pal().dim };
             text(dc, &friendly_date(time), rc(x[1] + sc(10), r.top, x[2] - sc(8), r.bottom), dim, DT_LEFT);

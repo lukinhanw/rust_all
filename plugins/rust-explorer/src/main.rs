@@ -1155,6 +1155,24 @@ mod sh {
 
     pub fn clip_clear() { unsafe { let _ = OleSetClipboard(None); } }
 
+    thread_local! { static CUT: RefCell<(u32, Vec<String>)> = const { RefCell::new((0, Vec::new())) }; } // (clipboard sequence, cut paths lower-case)
+
+    /// `p` is cut to the clipboard (here, in another window or another file manager): drawn faded, like Explorer. The
+    /// clipboard is read again only after it changed.
+    pub fn is_cut(p: &std::path::Path) -> bool {
+        let seq = unsafe { windows::Win32::System::DataExchange::GetClipboardSequenceNumber() };
+        CUT.with_borrow_mut(|c| {
+            if c.0 != seq {
+                let cut = match clip_get() { Some((v, true)) => v.iter().map(|p| p.to_string_lossy().to_lowercase()).collect(), _ => vec![] };
+                *c = (seq, cut);
+            }
+            !c.1.is_empty() && c.1.contains(&p.to_string_lossy().to_lowercase())
+        })
+    }
+
+    /// WM_CLIPBOARDUPDATE to `h` from now on: a cut or a new copy repaints the faded icons.
+    pub fn watch_clipboard(h: *mut c_void) { unsafe { let _ = windows::Win32::System::DataExchange::AddClipboardFormatListener(HWND(h)); } }
+
     struct Pidls(Vec<*mut ITEMIDLIST>);
     impl Drop for Pidls { fn drop(&mut self) { for p in &self.0 { unsafe { CoTaskMemFree(Some(*p as *const c_void)) }; } } }
 
@@ -1705,6 +1723,8 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                 let view = if desk() { LVS_ICON } else { LVS_REPORT };
                 let list = CreateWindowExW(0, w("SysListView32").as_ptr(), ptr::null(), WS_CHILD | WS_VISIBLE | view | if desk() { 0 } else { LVS_OWNERDATA } | LVS_EDITLABELS | LVS_SHOWSELALWAYS | LVS_SHAREIMAGELISTS, 0, 0, 0, 0, h, 0 as _, inst, ptr::null());
                 put(list, LVM_SETEXTENDEDLISTVIEWSTYLE, 0, (LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER) as isize);
+                put(list, LVM_SETCALLBACKMASK, LVIS_CUT as usize, 0); // cut items: LVN_GETDISPINFO says so, the list fades them
+                sh::watch_clipboard(h as _);
                 let mut fi: SHFILEINFOW = std::mem::zeroed();
                 let il = SHGetFileInfoW(w("C:\\").as_ptr(), 0, &mut fi, size_of::<SHFILEINFOW>() as u32, SHGFI_SYSICONINDEX | SHGFI_SMALLICON);
                 put(list, LVM_SETIMAGELIST, LVSIL_SMALL as usize, il as isize);
@@ -1762,6 +1782,11 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
             // the bar came, went or changed size (it sets the work area), or the screen changed: the icon list follows
             // another monitor became primary or its scale changed: fonts, icons and the menu were sized for the old one.
             // A new desktop takes over (it waits for this window to go) and this one ends.
+            // WM_CLIPBOARDUPDATE: something was cut or copied (here or elsewhere): the faded icons follow
+            0x031D => {
+                if let Some(list) = ST.with(|c| c.try_borrow().ok().map(|st| st.list)) { InvalidateRect(list, ptr::null(), 0); }
+                0
+            }
             WM_SETTINGCHANGE | WM_DISPLAYCHANGE | 0x02E0 /* WM_DPICHANGED */ if desk() && ui::scale_stale() => {
                 winrust_common::dpi::relaunch();
                 std::process::exit(0);
@@ -1891,6 +1916,7 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                                 *it.pszText.add(u.len()) = 0;
                             }
                             if r.hdr { if it.mask & LVIF_IMAGE != 0 { it.iImage = I_IMAGENONE; } return; }
+                            if it.mask & LVIF_STATE != 0 && it.stateMask & LVIS_CUT != 0 && sh::is_cut(&dir.join(&r.name)) { it.state |= LVIS_CUT; }
                             if it.mask & LVIF_IMAGE != 0 && *thumbs {
                                 if r.thumb == -2 {
                                     r.thumb = -1;
@@ -1971,8 +1997,10 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                             // Space: a quick look. Pictures open in photoview, videos / text / anything else in its default app
                             0x20 if !desk() => if let Some(p) = paths.first().filter(|p| p.is_file()) { activate(h, p.clone(), false); },
                             0x71 if !in_zip() => {
+                                // no reload below: it rebuilt the list and closed the edit box at once
                                 let i = put(list, LVM_GETNEXTITEM, usize::MAX, LVNI_SELECTED as isize);
                                 if i >= 0 { put(list, LVM_EDITLABELW, i as usize, 0); }
+                                return 0;
                             }
                             0x46 if ctrl => { search_focus(); return 0; } // Ctrl+F: address bar in search mode
                             0x73 | 0x4C if vk == 0x73 || ctrl => { // F4 / Ctrl+L: address bar
