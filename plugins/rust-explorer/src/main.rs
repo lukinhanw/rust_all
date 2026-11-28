@@ -1439,6 +1439,63 @@ mod sh {
         });
     }
 
+    /// The language-independent verb of a shell menu command ("open", "openas", "delete"...), if it has one.
+    fn verb_of(cm: &IContextMenu, cmd: usize) -> Option<String> {
+        let mut buf = [0u16; 64];
+        unsafe { cm.GetCommandString(cmd, GCS_VERBW, None, PSTR(buf.as_mut_ptr() as *mut u8), buf.len() as u32).ok()? };
+        let n = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+        Some(String::from_utf16_lossy(&buf[..n]))
+    }
+
+    /// "Open with": every app registered for the file's type, then "Browse..." for any program. The chosen app opens the
+    /// file through its own association (IAssocHandler::Invoke), like Explorer's list does.
+    fn open_with(hwnd: HWND, path: &std::path::Path, pt: POINT) -> Result<()> {
+        unsafe {
+            let ws = |s: &str| s.encode_utf16().chain([0]).collect::<Vec<u16>>();
+            let ext = path.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_else(|| ".".into());
+            let mut apps: Vec<(String, IAssocHandler)> = vec![];
+            if let Ok(en) = SHAssocEnumHandlers(PCWSTR(ws(&ext).as_ptr()), ASSOC_FILTER_NONE) {
+                loop {
+                    let mut one = [None];
+                    let mut got = 0u32;
+                    if en.Next(&mut one, Some(&mut got)).is_err() || got == 0 { break; }
+                    let Some(hd) = one[0].take() else { break };
+                    let Ok(name) = hd.GetUIName() else { continue };
+                    let n = name.to_string().unwrap_or_default();
+                    CoTaskMemFree(Some(name.0 as *const c_void));
+                    if !n.is_empty() && !apps.iter().any(|(a, _)| *a == n) { apps.push((n, hd)); }
+                }
+            }
+            let menu = CreatePopupMenu()?;
+            for (i, (name, _)) in apps.iter().enumerate() {
+                let t: Vec<u16> = name.encode_utf16().chain([0]).collect();
+                let _ = AppendMenuW(menu, MF_STRING, i + 1, PCWSTR(t.as_ptr()));
+            }
+            if !apps.is_empty() { let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null()); }
+            const BROWSE: usize = 0x7000;
+            let browse: Vec<u16> = crate::t!("Выбрать программу...", "Browse for an app...", ja: "アプリを参照...", pt: "Procurar outro aplicativo...", zh: "浏览其他应用...").encode_utf16().chain([0]).collect();
+            let _ = AppendMenuW(menu, MF_STRING, BROWSE, PCWSTR(browse.as_ptr()));
+            let id = TrackPopupMenuEx(menu, TPM_RETURNCMD.0 | TPM_RIGHTBUTTON.0, pt.x, pt.y, hwnd, None).0 as usize;
+            DestroyMenu(menu)?;
+            if (1..=apps.len()).contains(&id) {
+                let data: IDataObject = ui(hwnd, std::slice::from_ref(&path.to_path_buf()))?;
+                apps[id - 1].1.Invoke(&data)?;
+            } else if id == BROWSE {
+                // any program: it gets the file as its argument
+                let dlg: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)?;
+                let (label, spec) = (ws(crate::t!("Программы", "Programs", ja: "プログラム", pt: "Programas", zh: "程序")), ws("*.exe"));
+                dlg.SetFileTypes(&[windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC { pszName: PCWSTR(label.as_ptr()), pszSpec: PCWSTR(spec.as_ptr()) }])?;
+                if dlg.Show(Some(hwnd)).is_ok() {
+                    let exe = dlg.GetResult()?.GetDisplayName(SIGDN_FILESYSPATH)?;
+                    let exe_s = exe.to_string().unwrap_or_default();
+                    CoTaskMemFree(Some(exe.0 as *const c_void));
+                    let _ = std::process::Command::new(exe_s).arg(path).spawn();
+                }
+            }
+            Ok(())
+        }
+    }
+
     pub fn show(h: *mut c_void, paths: &[PathBuf], extra: &[(u32, &str)]) -> Result<Option<u32>> {
         unsafe {
             let hwnd = HWND(h);
@@ -1461,6 +1518,13 @@ mod sh {
             if extra.iter().any(|e| e.0 as i32 == id) {
                 DestroyMenu(menu)?;
                 return Ok(Some(id as u32));
+            }
+            // "Open with" / "Choose another app": Windows 11's chooser (OpenWith.exe) needs Explorer as the shell and never
+            // shows a window here, so the apps that can open the file are offered in our own menu instead
+            if id > 0 && paths.len() == 1 && verb_of(&cm, (id - 1) as usize).is_some_and(|v| v.eq_ignore_ascii_case("openas")) {
+                DestroyMenu(menu)?;
+                open_with(hwnd, &paths[0], pt)?;
+                return Ok(None);
             }
             if id > 0 {
                 // ptInvoke: without it dialogs the shell opens ("Open with" > choose another app) land off screen
