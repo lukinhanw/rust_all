@@ -148,10 +148,11 @@ fn apps_light() -> bool {
 }
 
 /// Context menus / scrollbars for the whole process (uxtheme's unnamed exports 135 and 136). Missing = stays light.
-/// The file manager is always dark; the desktop follows Windows' light / dark app mode, so its right-click menu looks like
-/// the Windows 11 desktop's own.
+/// The file manager follows the WinRust style (a light style such as Estrada branca gets light scrollbars and menus, not
+/// black ones); the desktop follows Windows' light / dark app mode, so its right-click menu looks like the Windows 11
+/// desktop's own.
 pub fn dark_mode(desktop: bool) {
-    let dark = !desktop || !apps_light();
+    let dark = if desktop { !apps_light() } else { !winrust_common::style::style().light() };
     MENU_DARK.store(dark, Relaxed);
     unsafe {
         let m = LoadLibraryW(w("uxtheme.dll").as_ptr());
@@ -177,6 +178,7 @@ pub unsafe fn restyle(h: HWND) {
         }
         1
     }
+    dark_mode(crate::desk()); // scrollbars and menus: light or dark with the new style
     EnumChildWindows(h, Some(each), 0);
     // the list rows' cached fonts and the title bar follow too
     let (a, b) = FONTS.replace((0, 0));
@@ -190,12 +192,13 @@ pub unsafe fn restyle(h: HWND) {
     RedrawWindow(h, ptr::null(), ptr::null_mut(), RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_FRAME);
 }
 
-/// Dark list: themed scrollbars and header, own colours and font, taller rows.
+/// The list in the style's colours: themed scrollbars and header (dark, or light for a light style), own font, taller rows.
 pub fn style_list(list: HWND) {
     unsafe {
-        SetWindowTheme(list, w("DarkMode_Explorer").as_ptr(), ptr::null());
+        let light = winrust_common::style::style().light();
+        SetWindowTheme(list, w(if light { "Explorer" } else { "DarkMode_Explorer" }).as_ptr(), ptr::null());
         let hdr = SendMessageW(list, LVM_GETHEADER, 0, 0) as HWND;
-        SetWindowTheme(hdr, w("DarkMode_ItemsView").as_ptr(), ptr::null());
+        SetWindowTheme(hdr, w(if light { "ItemsView" } else { "DarkMode_ItemsView" }).as_ptr(), ptr::null());
         for (m, c) in [(LVM_SETBKCOLOR, listbg()), (LVM_SETTEXTBKCOLOR, listbg()), (LVM_SETTEXTCOLOR, pal().text)] { SendMessageW(list, m, 0, c as isize); }
         SendMessageW(list, WM_SETFONT, font(14, 400, ui_face()) as usize, 1);
         row_height(list, true);
@@ -306,7 +309,7 @@ pub unsafe fn list_draw(lp: LPARAM) -> LRESULT {
                 return CDRF_SKIPDEFAULT as isize;
             }
             let sel = SendMessageW(list, LVM_GETITEMSTATE, i, LVIS_SELECTED as isize) as u32 & LVIS_SELECTED != 0;
-            let hot = ROWHOT.get() == i as isize;
+            let hot = ROWHOT.get() == i as isize || crate::DROP_ROW.load(std::sync::atomic::Ordering::Relaxed) == i as isize; // also a folder a drag would drop into
             let focus = GetFocus() == list;
             let pill = rc(sc(6), r.top + sc(2), cr.right - sc(6), r.bottom - sc(2));
             let bg = match (sel, focus) {

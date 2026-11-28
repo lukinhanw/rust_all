@@ -63,6 +63,71 @@ pub fn program(target: &str) -> bool {
     shell_execute(target)
 }
 
+/// This process runs elevated (as administrator).
+pub fn elevated() -> bool {
+    use windows_sys::Win32::{Foundation::CloseHandle, Security::{GetTokenInformation, TOKEN_QUERY, TokenElevation}, System::Threading::{GetCurrentProcess, OpenProcessToken}};
+    unsafe {
+        let mut tok = std::ptr::null_mut();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut tok) == 0 {
+            return false;
+        }
+        let (mut e, mut len) = (0u32, 0u32);
+        let ok = GetTokenInformation(tok, TokenElevation, &mut e as *mut u32 as _, 4, &mut len) != 0;
+        CloseHandle(tok);
+        ok && e != 0
+    }
+}
+
+/// Starts `exe` with `args` under the desktop's own token (the process behind the "Progman" window: WinRust's desktop or
+/// Explorer's, both unelevated), so a program started from an elevated one (the bar, the hotkeys helper) is not elevated
+/// too. Windows keeps an elevated window and a normal one apart: no paste or drag and drop between them. False when there
+/// is no desktop process, it is elevated itself, or Windows refused (the caller then carries on as it is).
+pub fn as_desktop_user(exe: &str, args: &str) -> bool {
+    use windows_sys::Win32::{
+        Foundation::CloseHandle,
+        Security::{DuplicateTokenEx, GetTokenInformation, SecurityImpersonation, TOKEN_ASSIGN_PRIMARY, TOKEN_DUPLICATE, TOKEN_QUERY, TokenElevation, TokenPrimary},
+        System::Threading::{CreateProcessWithTokenW, OpenProcess, OpenProcessToken, PROCESS_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, STARTUPINFOW},
+        UI::WindowsAndMessaging::{FindWindowW, GetWindowThreadProcessId},
+    };
+    let wide = |s: &str| s.encode_utf16().chain([0]).collect::<Vec<u16>>();
+    unsafe {
+        let desk = FindWindowW(wide("Progman").as_ptr(), std::ptr::null());
+        let mut pid = 0;
+        if desk.is_null() || GetWindowThreadProcessId(desk, &mut pid) == 0 || pid == std::process::id() {
+            return false;
+        }
+        let proc_ = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if proc_.is_null() {
+            return false;
+        }
+        let mut tok = std::ptr::null_mut();
+        let opened = OpenProcessToken(proc_, TOKEN_DUPLICATE | TOKEN_QUERY, &mut tok) != 0;
+        CloseHandle(proc_);
+        if !opened {
+            return false;
+        }
+        let (mut e, mut len) = (1u32, 0u32);
+        GetTokenInformation(tok, TokenElevation, &mut e as *mut u32 as _, 4, &mut len);
+        let mut dup = std::ptr::null_mut();
+        let ok = e == 0 && DuplicateTokenEx(tok, TOKEN_ASSIGN_PRIMARY | TOKEN_DUPLICATE | TOKEN_QUERY | 0x0080 /* ADJUST_DEFAULT */ | 0x0100 /* ADJUST_SESSIONID */, std::ptr::null(), SecurityImpersonation, TokenPrimary, &mut dup) != 0;
+        CloseHandle(tok);
+        if !ok {
+            return false;
+        }
+        let mut cmd = wide(&format!("\"{exe}\" {args}"));
+        let mut si: STARTUPINFOW = std::mem::zeroed();
+        si.cb = size_of::<STARTUPINFOW>() as u32;
+        let mut pi: PROCESS_INFORMATION = std::mem::zeroed();
+        let started = CreateProcessWithTokenW(dup, 0, wide(exe).as_ptr(), cmd.as_mut_ptr(), 0, std::ptr::null(), std::ptr::null(), &si, &mut pi) != 0;
+        CloseHandle(dup);
+        if started {
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+        }
+        started
+    }
+}
+
 /// The shell's own "open" association: the last resort, and the normal way for `.msc` / `.cpl` / `.bat`.
 fn shell_execute(target: &str) -> bool {
     use std::ptr::{null, null_mut};

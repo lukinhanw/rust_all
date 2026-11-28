@@ -338,7 +338,96 @@ fn new_entry(dir: &PathBuf, base: &str, folder: bool) {
     if zipx::split_zip(dir).is_some() { return; }
     let (stem, ext) = match base.rsplit_once('.') { Some((s, e)) if !folder => (s.to_string(), format!(".{e}")), _ => (base.to_string(), String::new()) };
     let path = (1..).map(|n| dir.join(if n == 1 { base.to_string() } else { format!("{stem} ({n}){ext}") })).find(|p| !p.exists());
-    if let Some(p) = path { let _ = if folder { fs::create_dir(p) } else { fs::File::create(p).map(drop) }; }
+    let Some(p) = path else { return };
+    if (if folder { fs::create_dir(&p) } else { fs::File::create(&p).map(drop) }).is_ok() {
+        NEW_NAME.set(p.file_name().map(|n| n.to_string_lossy().into_owned()));
+        undo_push(Undo::Remove(vec![p]));
+    }
+}
+
+thread_local! {
+    static NEW_NAME: RefCell<Option<String>> = const { RefCell::new(None) }; // just created: the next listing selects it and edits its name
+    static UNDO: RefCell<Vec<Undo>> = const { RefCell::new(Vec::new()) };
+    static PENDING: RefCell<Option<Transfer>> = const { RefCell::new(None) }; // a paste running in the background copier
+}
+
+/// What Ctrl+Z puts back (the last file operations of this window, newest last).
+enum Undo {
+    /// made by a copy or "New": they go to the Recycle Bin
+    Remove(Vec<PathBuf>),
+    /// moved or renamed: (where it is now, where it was)
+    Back(Vec<(PathBuf, PathBuf)>),
+}
+
+fn undo_push(u: Undo) {
+    UNDO.with_borrow_mut(|v| {
+        v.push(u);
+        if v.len() > 50 { v.remove(0); }
+    });
+}
+
+/// A copy or move into `to`: what was there before, to tell afterwards what it added.
+struct Transfer { to: PathBuf, before: std::collections::HashSet<String>, from: Vec<PathBuf>, moved: bool }
+
+fn names_in(dir: &Path) -> std::collections::HashSet<String> {
+    fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.file_name().to_string_lossy().to_lowercase()).collect()
+}
+
+impl Transfer {
+    fn new(to: &Path, from: &[PathBuf], moved: bool) -> Transfer { Transfer { to: to.to_path_buf(), before: names_in(to), from: from.to_vec(), moved } }
+    /// After it ran: the undo step for what really arrived (a name taken by "(2)" is matched in order).
+    fn finish(self) {
+        let added: Vec<PathBuf> = fs::read_dir(&self.to).into_iter().flatten().flatten().map(|e| e.path())
+            .filter(|p| p.file_name().is_some_and(|n| !self.before.contains(&n.to_string_lossy().to_lowercase()))).collect();
+        if let Some(u) = undo_step(added, self.from, self.moved) { undo_push(u); }
+    }
+}
+
+/// The undo step for `added` (what a transfer put into its folder): a copy removes them, a move sends each back to the
+/// source of the same name; names the shell changed ("x (2)") are paired with the remaining sources in order.
+fn undo_step(mut added: Vec<PathBuf>, from: Vec<PathBuf>, moved: bool) -> Option<Undo> {
+    if added.is_empty() { return None; }
+    if !moved { return Some(Undo::Remove(added)); }
+    let (mut pairs, mut left) = (vec![], vec![]);
+    for src in from {
+        match added.iter().position(|a| a.file_name() == src.file_name()) {
+            Some(i) => pairs.push((added.remove(i), src)),
+            None => left.push(src),
+        }
+    }
+    pairs.extend(added.into_iter().zip(left));
+    (!pairs.is_empty()).then_some(Undo::Back(pairs))
+}
+
+/// Copies or moves `from` into `to` through the shell (its progress, conflicts and elevation), with an undo step.
+fn transfer(h: HWND, from: &[PathBuf], to: &Path, moved: bool) {
+    let t = Transfer::new(to, from, moved);
+    let _ = sh::fileop(h, if moved { sh::Op::Move } else { sh::Op::Copy }, from, &to.to_path_buf());
+    t.finish();
+}
+
+/// Ctrl+Z: undoes the last copy, move, rename or "New" of this window. A copy or new item goes to the Recycle Bin (so the
+/// undo itself can be undone from there), a move or rename goes back where it was.
+/// shortcut: a delete is not undone here (restore it from the Recycle Bin); add when wanted.
+fn undo(h: HWND) {
+    let Some(u) = UNDO.with_borrow_mut(|v| v.pop()) else { return };
+    match u {
+        Undo::Remove(v) => {
+            let v: Vec<PathBuf> = v.into_iter().filter(|p| p.exists()).collect();
+            if let Some(dir) = v.first().and_then(|p| p.parent()).map(Path::to_path_buf) { let _ = sh::fileop(h, sh::Op::Delete, &v, &dir); }
+        }
+        Undo::Back(pairs) => {
+            for (now, was) in pairs {
+                if !now.exists() || was.exists() { continue; }
+                if fs::rename(&now, &was).is_err() {
+                    // another drive: the shell moves it back to its folder, then the old name if a "(2)" was added
+                    let Some(dir) = was.parent().map(Path::to_path_buf) else { continue };
+                    let _ = sh::fileop(h, sh::Op::Move, std::slice::from_ref(&now), &dir);
+                    if let Some(n) = now.file_name() { let _ = fs::rename(dir.join(n), &was); }
+                }
+            }
+        }
+    }
 }
 
 /// Pastes what is on the system clipboard (files copied or cut here or in any other file manager).
@@ -349,9 +438,10 @@ fn paste(h: HWND, dir: &PathBuf) {
     let Some((paths, cut)) = sh::clip_get() else { return };
     let fast = jobs::can_fast_copy(&paths, dir) && !(cut && paths.iter().all(|p| jobs::same_volume(p, dir))) && jobs::writable(dir);
     if fast && !jobs::busy() {
+        PENDING.set(Some(Transfer::new(dir, &paths, cut))); // its undo step is made when the job ends (WM_JOB)
         jobs::copy(h as isize, paths, dir.clone(), cut);
     } else {
-        let _ = sh::fileop(h, if cut { sh::Op::Move } else { sh::Op::Copy }, &paths, dir);
+        transfer(h, &paths, dir, cut);
     }
     if cut { sh::clip_clear(); }
 }
@@ -761,6 +851,11 @@ fn load(h: HWND, dir: PathBuf) {
     reset_thumbs();
     put(list, LVM_DELETEALLITEMS, 0, 0);
     if desk() { desk::fill(list, n); } else { put(list, LVM_SETITEMCOUNT, n, 0); }
+    if let Some(name) = NEW_NAME.take() {
+        select_row(&name);
+        let i = put(list, LVM_GETNEXTITEM, usize::MAX, LVNI_SELECTED as isize);
+        if i >= 0 { unsafe { SetFocus(list) }; put(list, LVM_EDITLABELW, i as usize, 0); }
+    }
     folder_sizes(h, dir, ST.with_borrow(|st| st.rows.iter().filter(|r| r.dir && !r.hdr).map(|r| r.name.clone()).collect()));
 }
 
@@ -846,9 +941,44 @@ fn local_search(dir: &Path, q: &str) -> (Vec<Row>, bool, bool) {
     if out.is_empty() && !other.is_empty() { (other, cut, true) } else { (out, cut, false) }
 }
 
+thread_local! { static BIG: RefCell<std::collections::HashMap<i32, i32>> = RefCell::new(std::collections::HashMap::new()); } // system icon -> index in the thumbnail list
+
+/// System icon `sys` (shell image-list index) in the thumbnail list, 48 px centered on a thumbnail-sized cell; added once
+/// per listing. What a row shows until its thumbnail arrives, or for good when there is none.
+fn big_icon(himl: isize, sys: i32) -> i32 {
+    use windows_sys::Win32::Graphics::Gdi::*;
+    if sys < 0 || himl == 0 { return I_IMAGENONE; }
+    if let Some(i) = BIG.with_borrow(|m| m.get(&sys).copied()) { return i; }
+    let idx = unsafe {
+        let mut il: *mut std::ffi::c_void = ptr::null_mut();
+        const IID_IIMAGELIST: windows_sys::core::GUID = windows_sys::core::GUID::from_u128(0x46eb5926_582e_4017_9fdf_e8998daa0950);
+        SHGetImageList(SHIL_EXTRALARGE as i32, &IID_IIMAGELIST, &mut il);
+        let hi = if il.is_null() { ptr::null_mut() } else { ImageList_GetIcon(il as _, sys, ILD_TRANSPARENT) };
+        if hi.is_null() { I_IMAGENONE } else {
+            let mut bi: BITMAPINFO = std::mem::zeroed();
+            bi.bmiHeader = BITMAPINFOHEADER { biSize: size_of::<BITMAPINFOHEADER>() as u32, biWidth: THUMB, biHeight: -THUMB, biPlanes: 1, biBitCount: 32, biCompression: BI_RGB, ..std::mem::zeroed() };
+            let mut bits = ptr::null_mut();
+            let bmp = CreateDIBSection(ptr::null_mut(), &bi, DIB_RGB_COLORS, &mut bits, ptr::null_mut(), 0);
+            let dc = CreateCompatibleDC(ptr::null_mut());
+            let old = SelectObject(dc, bmp);
+            let (sz, off) = (48, (THUMB - 48) / 2);
+            DrawIconEx(dc, off, off, hi, sz, sz, 0, ptr::null_mut(), DI_NORMAL);
+            SelectObject(dc, old);
+            DeleteDC(dc);
+            DestroyIcon(hi);
+            let i = ImageList_Add(himl as _, bmp, ptr::null_mut());
+            DeleteObject(bmp);
+            i
+        }
+    };
+    BIG.with_borrow_mut(|m| m.insert(sys, idx));
+    idx
+}
+
 /// Drops all thumbnails and invalidates in-flight ones; call whenever the rows are replaced.
 fn reset_thumbs() {
     GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    BIG.with_borrow_mut(|m| m.clear());
     let himl = ST.with_borrow(|st| st.himl);
     unsafe { ImageList_Remove(himl as _, -1) };
 }
@@ -883,6 +1013,31 @@ fn folder_sizes(h: HWND, dir: PathBuf, names: Vec<String>) {
 }
 
 fn reload(h: HWND) { load(h, cur_dir()); }
+
+/// The row a drag is over and would drop into (a folder), -1 = none: drawn highlighted.
+pub(crate) static DROP_ROW: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(-1);
+
+fn set_drop_row(i: isize) {
+    let old = DROP_ROW.swap(i, Relaxed);
+    if old == i { return; }
+    let Some(list) = ST.with(|c| c.try_borrow().ok().map(|st| st.list)) else { return };
+    for r in [old, i].into_iter().filter(|&r| r >= 0) { put(list, LVM_REDRAWITEMS, r as usize, r); }
+    unsafe { windows_sys::Win32::Graphics::Gdi::UpdateWindow(list) };
+}
+
+/// Where something dragged to screen point (x, y) lands: the folder row under the pointer (and its index), else the open
+/// folder (-1).
+fn drop_target(x: i32, y: i32) -> (PathBuf, isize) {
+    let Some((list, dir)) = ST.with(|c| c.try_borrow().ok().map(|st| (st.list, st.dir.clone()))) else { return (PathBuf::new(), -1) };
+    let mut ht: LVHITTESTINFO = unsafe { std::mem::zeroed() };
+    ht.pt = POINT { x, y };
+    unsafe { windows_sys::Win32::Graphics::Gdi::ScreenToClient(list, &mut ht.pt) };
+    let i = put(list, LVM_HITTEST, 0, &mut ht as *mut _ as isize);
+    let row = ST.with(|c| c.try_borrow().ok().and_then(|st| {
+        usize::try_from(i).ok().and_then(|i| st.rows.get(i)).filter(|r| r.dir && !r.hdr && r.name != BIN).map(|r| st.dir.join(&r.name))
+    }));
+    match row { Some(p) if ht.flags & (LVHT_ONITEMICON | LVHT_ONITEMLABEL) != 0 => (p, i), _ => (dir, -1) }
+}
 
 /// (list, current dir, full paths of the selected rows)
 fn selected() -> (HWND, PathBuf, Vec<PathBuf>) {
@@ -1096,11 +1251,14 @@ mod sh {
     }
 
     /// Background thumbnail loader: GetImage for each (era, row, path) asked for, result posted to the main window.
+    /// Three loaders share the queue: one slow file (a big video, a file still being copied) no longer holds up the rest.
     pub fn start_thumbs(main: isize) -> std::sync::mpsc::Sender<(u32, usize, PathBuf)> {
         let (tx, rx) = std::sync::mpsc::channel::<(u32, usize, PathBuf)>();
-        std::thread::spawn(move || unsafe {
+        let rx = std::sync::Arc::new(std::sync::Mutex::new(rx));
+        for _ in 0..3 { let rx = rx.clone(); std::thread::spawn(move || unsafe {
             let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-            for (era, row, path) in rx {
+            loop {
+                let Ok((era, row, path)) = rx.lock().map_err(|_| ()).and_then(|r| r.recv().map_err(|_| ())) else { return };
                 if era != super::GEN.load(std::sync::atomic::Ordering::Relaxed) { continue; }
                 let Ok(f) = SHCreateItemFromParsingName::<_, _, IShellItemImageFactory>(PCWSTR(wide(&path).as_ptr()), None) else { continue };
                 let Ok(bmp) = f.GetImage(SIZE { cx: super::THUMB, cy: super::THUMB }, SIIGBF_BIGGERSIZEOK) else { continue };
@@ -1110,7 +1268,7 @@ mod sh {
                 let b = Box::new((era, row, padded as isize));
                 let _ = PostMessageW(Some(HWND(main as *mut c_void)), super::WM_THUMB, WPARAM(Box::into_raw(b) as usize), LPARAM(0));
             }
-        });
+        }); }
         tx
     }
 
@@ -1168,6 +1326,9 @@ mod sh {
     }
 
     pub fn clip_clear() { unsafe { let _ = OleSetClipboard(None); } }
+
+    /// The window is closing: what it cut or copied is rendered onto the clipboard, so Ctrl+V still works in another window.
+    pub fn clip_keep() { unsafe { let _ = OleFlushClipboard(); } }
 
     thread_local! { static CUT: RefCell<(u32, Vec<String>)> = const { RefCell::new((0, Vec::new())) }; } // (clipboard sequence, cut paths lower-case)
 
@@ -1373,15 +1534,36 @@ mod sh {
     }
 
     #[implement(IDropTarget)]
-    struct DropT { main: isize }
+    struct DropT { main: isize, from: RefCell<Vec<PathBuf>> }
 
-    fn effect(k: MODIFIERKEYS_FLAGS) -> DROPEFFECT { if k.0 & 8 != 0 { DROPEFFECT_COPY } else { DROPEFFECT_MOVE } } // 8 = MK_CONTROL
+    /// What a drop of `from` at screen point `pt` does: (target folder, copy?) or None when it cannot go there. The target is
+    /// the folder row under the pointer, else the open folder. Like Explorer: same drive moves, another drive or Ctrl
+    /// copies; a folder never goes into itself, and onto its own folder nothing happens.
+    fn drop_plan(from: &[PathBuf], k: MODIFIERKEYS_FLAGS, pt: &POINTL) -> Option<(PathBuf, bool)> {
+        let (to, row) = super::drop_target(pt.x, pt.y);
+        super::set_drop_row(row);
+        if from.is_empty() || super::in_zip() || from.iter().any(|f| to.starts_with(f)) { return None; }
+        if from.iter().all(|f| f.parent() == Some(to.as_path())) { return None; }
+        let drive = |p: &std::path::Path| p.components().next().map(|c| c.as_os_str().to_string_lossy().to_lowercase());
+        Some((to.clone(), k.0 & 8 != 0 || drive(&from[0]) != drive(&to))) // 8 = MK_CONTROL
+    }
 
     impl IDropTarget_Impl for DropT_Impl {
-        fn DragEnter(&self, _o: Ref<'_, IDataObject>, k: MODIFIERKEYS_FLAGS, _pt: &POINTL, e: *mut DROPEFFECT) -> Result<()> { unsafe { *e = if super::in_zip() { DROPEFFECT_NONE } else { effect(k) } }; Ok(()) }
-        fn DragOver(&self, k: MODIFIERKEYS_FLAGS, _pt: &POINTL, e: *mut DROPEFFECT) -> Result<()> { unsafe { *e = if super::in_zip() { DROPEFFECT_NONE } else { effect(k) } }; Ok(()) }
-        fn DragLeave(&self) -> Result<()> { Ok(()) }
+        fn DragEnter(&self, o: Ref<'_, IDataObject>, k: MODIFIERKEYS_FLAGS, pt: &POINTL, e: *mut DROPEFFECT) -> Result<()> {
+            *self.from.borrow_mut() = o.ok().ok().and_then(|o| hdrop_paths(o).ok()).unwrap_or_default();
+            self.DragOver(k, pt, e)
+        }
+        fn DragOver(&self, k: MODIFIERKEYS_FLAGS, pt: &POINTL, e: *mut DROPEFFECT) -> Result<()> {
+            // desktop icons moved around the desktop: the desktop's own dragger places them (and drops them into folder icons)
+            let eff = if super::desk::dragging() { DROPEFFECT_MOVE } else {
+                match drop_plan(&self.from.borrow(), k, pt) { Some((_, true)) => DROPEFFECT_COPY, Some((_, false)) => DROPEFFECT_MOVE, None => DROPEFFECT_NONE }
+            };
+            unsafe { *e = eff };
+            Ok(())
+        }
+        fn DragLeave(&self) -> Result<()> { super::set_drop_row(-1); Ok(()) }
         fn Drop(&self, o: Ref<'_, IDataObject>, k: MODIFIERKEYS_FLAGS, pt: &POINTL, e: *mut DROPEFFECT) -> Result<()> {
+            super::set_drop_row(-1);
             if super::desk::dragging() {
                 // desktop icons dropped back on the desktop: a move of the icons, not of the files (the dragger finishes it)
                 super::desk::dropped_here((pt.x, pt.y));
@@ -1393,18 +1575,17 @@ mod sh {
                 return Ok(());
             }
             let paths = hdrop_paths(o.ok()?)?;
-            let to = super::cur_dir();
-            // like Explorer: same drive moves, other drive copies, Ctrl forces copy
-            let copy = k.0 & 8 != 0 || paths.first().and_then(|p| p.components().next()) != to.components().next();
+            let Some((to, copy)) = drop_plan(&paths, k, pt) else { unsafe { *e = DROPEFFECT_NONE }; return Ok(()) };
+            super::set_drop_row(-1);
             unsafe { *e = if copy { DROPEFFECT_COPY } else { DROPEFFECT_MOVE } };
-            let _ = fileop(self.main as *mut c_void, if copy { Op::Copy } else { Op::Move }, &paths, &to);
+            super::transfer(self.main as _, &paths, &to, !copy); // with its Ctrl+Z step
             unsafe { let _ = PostMessageW(Some(HWND(self.main as *mut c_void)), WM_APP, WPARAM(0), LPARAM(0)); }
             Ok(())
         }
     }
 
     pub fn register_drop(list: *mut c_void, main: isize) -> Result<()> {
-        let t: IDropTarget = DropT { main }.into();
+        let t: IDropTarget = DropT { main, from: RefCell::new(vec![]) }.into();
         unsafe { RegisterDragDrop(HWND(list), &t) }
     }
 }
@@ -1737,7 +1918,7 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                 let view = if desk() { LVS_ICON } else { LVS_REPORT };
                 let list = CreateWindowExW(0, w("SysListView32").as_ptr(), ptr::null(), WS_CHILD | WS_VISIBLE | view | if desk() { 0 } else { LVS_OWNERDATA } | LVS_EDITLABELS | LVS_SHOWSELALWAYS | LVS_SHAREIMAGELISTS, 0, 0, 0, 0, h, 0 as _, inst, ptr::null());
                 put(list, LVM_SETEXTENDEDLISTVIEWSTYLE, 0, (LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER) as isize);
-                put(list, LVM_SETCALLBACKMASK, LVIS_CUT as usize, 0); // cut items: LVN_GETDISPINFO says so, the list fades them
+                put(list, LVM_SETCALLBACKMASK, (LVIS_CUT | LVIS_DROPHILITED) as usize, 0); // cut items fade, a drop target lights up: LVN_GETDISPINFO says which
                 sh::watch_clipboard(h as _);
                 let mut fi: SHFILEINFOW = std::mem::zeroed();
                 let il = SHGetFileInfoW(w("C:\\").as_ptr(), 0, &mut fi, size_of::<SHFILEINFOW>() as u32, SHGFI_SYSICONINDEX | SHGFI_SMALLICON);
@@ -1920,7 +2101,7 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                         // a request that arrives while ST is borrowed is skipped; the list repaints later
                         ST.with(|c| {
                             let Ok(mut st) = c.try_borrow_mut() else { return };
-                            let State { dir, rows, thumbs, .. } = &mut *st;
+                            let State { dir, rows, thumbs, himl, .. } = &mut *st;
                             let Some(i) = usize::try_from(it.iItem).ok() else { return };
                             let Some(r) = rows.get_mut(i) else { return };
                             if it.mask & LVIF_TEXT != 0 && it.cchTextMax > 0 {
@@ -1931,12 +2112,17 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                             }
                             if r.hdr { if it.mask & LVIF_IMAGE != 0 { it.iImage = I_IMAGENONE; } return; }
                             if it.mask & LVIF_STATE != 0 && it.stateMask & LVIS_CUT != 0 && sh::is_cut(&dir.join(&r.name)) { it.state |= LVIS_CUT; }
+                            if it.mask & LVIF_STATE != 0 && it.stateMask & LVIS_DROPHILITED != 0 && DROP_ROW.load(Relaxed) == i as isize { it.state |= LVIS_DROPHILITED; }
                             if it.mask & LVIF_IMAGE != 0 && *thumbs {
                                 if r.thumb == -2 {
                                     r.thumb = -1;
                                     if let Some(tx) = TX.get() { let _ = tx.send((GEN.load(std::sync::atomic::Ordering::Relaxed), i, dir.join(&r.name))); }
                                 }
-                                it.iImage = if r.thumb >= 0 { r.thumb } else { I_IMAGENONE };
+                                // no thumbnail yet (or none at all: a locked, moving or unreadable file): the file's own icon, never a blank
+                                it.iImage = if r.thumb >= 0 { r.thumb } else {
+                                    if r.icon < 0 { r.icon = icon_of(&dir.join(&r.name), r.dir); }
+                                    big_icon(*himl, r.icon)
+                                };
                             } else if it.mask & LVIF_IMAGE != 0 {
                                 if r.icon < 0 { r.icon = icon_of(&dir.join(&r.name), r.dir); }
                                 it.iImage = r.icon;
@@ -2036,6 +2222,7 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                                 return 0;
                             }
                             0x56 if ctrl => paste(h, &dir),
+                            0x5A if ctrl && !in_zip() => undo(h), // Ctrl+Z
                             0x4E if ctrl => new_entry(&dir, t!("Новая папка", "New folder", ja: "新しいフォルダー", pt: "Nova pasta", zh: "新建文件夹"), true),
                             0x48 if ctrl => { SHOW_HIDDEN.fetch_xor(true, Relaxed); } // Ctrl+H: hidden files
                             0x74 => {} // F5: just the reload below
@@ -2063,7 +2250,11 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
                             let new = wstr(it.pszText);
                             // reject separators so a rename can never move the item
                             if !new.is_empty() && !new.contains(['\\', '/', ':']) {
-                                ST.with_borrow(|st| if let Some(r) = usize::try_from(it.iItem).ok().and_then(|i| st.rows.get(i)) { let _ = fs::rename(st.dir.join(&r.name), st.dir.join(&new)); });
+                                let done = ST.with_borrow(|st| usize::try_from(it.iItem).ok().and_then(|i| st.rows.get(i)).and_then(|r| {
+                                    let (old, to) = (st.dir.join(&r.name), st.dir.join(&new));
+                                    fs::rename(&old, &to).ok().map(|_| (to, old))
+                                }));
+                                if let Some(pair) = done { undo_push(Undo::Back(vec![pair])); }
                                 PostMessageW(h, WM_APP, 0, 0); // reload after the edit control is gone
                             }
                         }
@@ -2077,6 +2268,7 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
             shellwin::WM_SHELL_SELECT => { shell_select(h as isize, *Box::from_raw(lp as *mut PathBuf)); 0 }
             WM_JOB => {
                 let err = *Box::from_raw(wp as *mut Option<String>);
+                if let Some(t) = PENDING.take() { t.finish(); }
                 reload(h);
                 ui::status_dirty(h);
                 if let Some(e) = err { MessageBoxW(h, w(&e).as_ptr(), w("WinRust Explorer").as_ptr(), MB_ICONWARNING); }
@@ -2131,7 +2323,7 @@ unsafe extern "system" fn proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESU
             WM_CONTEXTMENU if desk() && (icons_hidden() || wp as HWND == h) => { bg_menu(h); 0 }
             desk::SPAWN_WORKERW if desk() => { desk::spawn_workerw(h); 0 }
             WM_TIMER if desk() && wp == 7 => { desk::check_live(ST.with_borrow(|st| st.list)); 0 }
-            WM_DESTROY => { if !desk() { save_place(h); } shellwin::revoke(); PostQuitMessage(0); 0 }
+            WM_DESTROY => { if !desk() { save_place(h); } shellwin::revoke(); sh::clip_keep(); PostQuitMessage(0); 0 }
             _ => DefWindowProcW(h, m, wp, lp),
         }
     }
@@ -2165,6 +2357,15 @@ fn main() {
             unsafe { ShellExecuteExW(&mut sei) };
         }
         return;
+    }
+    // a folder window started from an elevated program (the bar, Win+E from the hotkeys helper) would be elevated too, and
+    // Windows keeps it apart from the normal ones: no paste of what was cut there, no drag and drop between them. It starts
+    // again under the desktop's own token, like Explorer's windows always are.
+    if env::args().nth(1).as_deref() != Some("--desktop") && winrust_common::launch::elevated() {
+        let args: Vec<String> = env::args().skip(1).map(|a| if a.contains(' ') && !a.starts_with('"') { format!("\"{a}\"") } else { a }).collect();
+        if let Ok(exe) = env::current_exe() {
+            if winrust_common::launch::as_desktop_user(&exe.to_string_lossy(), &args.join(" ")) { return; }
+        }
     }
     sh::init();
     unsafe {
@@ -2232,6 +2433,21 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn undo_of_a_move_sends_each_file_back_to_its_source() {
+        use super::{Undo, undo_step};
+        use std::path::PathBuf;
+        let p = |s: &str| PathBuf::from(s);
+        // a copy: what arrived is removed
+        assert!(matches!(undo_step(vec![p(r"D:\b\x.txt")], vec![p(r"C:\a\x.txt")], false), Some(Undo::Remove(v)) if v == [p(r"D:\b\x.txt")]));
+        // a move: matched by name, a name the shell changed ("y (2)") goes with the source left over
+        let u = undo_step(vec![p(r"D:\b\y (2).txt"), p(r"D:\b\x.txt")], vec![p(r"C:\a\x.txt"), p(r"C:\a\y.txt")], true);
+        let Some(Undo::Back(pairs)) = u else { panic!("expected a move back") };
+        assert_eq!(pairs, vec![(p(r"D:\b\x.txt"), p(r"C:\a\x.txt")), (p(r"D:\b\y (2).txt"), p(r"C:\a\y.txt"))]);
+        // nothing arrived (cancelled): no step
+        assert!(undo_step(vec![], vec![p(r"C:\a\x.txt")], true).is_none());
+    }
+
     #[test]
     fn desktop_rows_fill_down_to_the_bar() {
         // 1080 px screen, 34 px bar: the nominal 96 px left a 74 px strip under 10 rows; 11 rows of 94 fill it
