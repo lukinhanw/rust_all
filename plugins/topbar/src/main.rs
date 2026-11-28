@@ -837,7 +837,10 @@ unsafe extern "system" fn collect(h: HWND, lp: LPARAM) -> i32 {
     // an untitled window counts when it asks for a button (WS_EX_APPWINDOW), like under Explorer
     let titled = GetWindowTextLengthW(h) > 0 || ex & WS_EX_APPWINDOW != 0;
     let skipped = SKIP.with_borrow(|s| s.contains(&h));
-    if IsWindowVisible(h) != 0 && GetWindow(h, GW_OWNER).is_null() && cloaked == 0 && !ours && titled && (ex & WS_EX_TOOLWINDOW == 0 || ex & WS_EX_APPWINDOW != 0) && !skipped {
+    // owned windows count too when they ask for a button, as under Explorer: a Visual Basic 6 app's main form is owned by
+    // its invisible ThunderRT6Main window (USBWebserver had no button)
+    let top = GetWindow(h, GW_OWNER).is_null() || ex & WS_EX_APPWINDOW != 0;
+    if IsWindowVisible(h) != 0 && top && cloaked == 0 && !ours && titled && (ex & WS_EX_TOOLWINDOW == 0 || ex & WS_EX_APPWINDOW != 0) && !skipped {
         (*(lp as *mut Vec<HWND>)).push(h);
     }
     1

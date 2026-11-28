@@ -34,7 +34,7 @@ unsafe extern "system" fn collect(h: HWND, lp: LPARAM) -> BOOL {
         // an untitled window that asks for a taskbar button (WS_EX_APPWINDOW, e.g. DeusOT) is an app window too: left
         // up, a maximized one kept covering the desktop
         let titled = GetWindowTextLengthW(h) > 0 || ex & WS_EX_APPWINDOW != 0;
-        if IsWindowVisible(h) != 0 && IsIconic(h) == 0 && !tool && cloaked == 0 && GetWindow(h, GW_OWNER).is_null() && titled && !is_desktop(h) {
+        if IsWindowVisible(h) != 0 && IsIconic(h) == 0 && !tool && cloaked == 0 && (GetWindow(h, GW_OWNER).is_null() || ex & WS_EX_APPWINDOW != 0) && titled && !is_desktop(h) {
             (*(lp as *mut Vec<isize>)).push(h as isize);
         }
         1
